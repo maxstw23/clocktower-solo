@@ -36,6 +36,14 @@ considers. Nominations and votes compare it to thresholds that drop with `urgenc
 `bandwagon` per yes vote, and to zero when four or fewer players are alive. A player votes only
 for someone more suspicious than whoever is already on the block.
 
+**Perfect memory.** Every player remembers everything said or done in the open (claims, info,
+deaths, shots, Virgin results, every nomination and vote) plus what the Storyteller told them;
+it is all one public record, `Public`. Skill decides how well players *interpret* it, never what
+they remember: `vote_memory` is how much a remembered push of a now-good-looking execution counts
+against the pusher. Evil players also remember their own story and discard lies that would make
+their claim harder to believe than it already is. The human gets the same record as a notebook
+(`notes` or `?` at any prompt).
+
 **Personal bias.** Each player has a seeded ordering of the other seats that breaks ties. That
 is the only randomness in their behaviour.
 

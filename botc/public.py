@@ -47,13 +47,24 @@ class Nomination:
 
 
 @dataclass(frozen=True)
+class Vote:
+    """A nomination that went to a vote, and who raised a hand."""
+    day: int
+    nominator: int
+    nominee: int
+    voters: tuple
+
+
+@dataclass(frozen=True)
 class Public:
+    """Everything said or done in the open. Every player remembers all of it."""
     n: int
     claims: tuple = ()  # claimed role by seat, set once on day 1
     reports: tuple = ()
     deaths: tuple = ()
     shots: tuple = ()
     first_noms: tuple = ()
+    votes: tuple = ()  # not used by the solver, only by social reasoning
 
     def plus(self, *reports):
         return replace(self, reports=self.reports + tuple(reports))

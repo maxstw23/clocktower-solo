@@ -19,7 +19,8 @@ def main():
     seed = args.seed if args.seed is not None else random.randrange(10**6)
     seat = args.seat if args.seat is not None else random.Random(f"seat-{seed}").randrange(args.players)
     print(f"Blood on the Clocktower, Trouble Brewing: seed {seed}, {args.players} players.")
-    print("Type a name (or its first letters) to choose a player; Enter takes the default.\n")
+    print("Type a name (or its first letters) to choose a player; Enter takes the default.")
+    print("Type 'notes' (or '?') at any prompt to see everything said and done so far.\n")
     Game(args.players, seed, human=seat, hints=args.hints).run()
 
 

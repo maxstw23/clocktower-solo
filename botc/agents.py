@@ -31,14 +31,15 @@ class Profile:
     lookahead: int = 3       # evil only: how many candidate lies they test against their read of the town
     ft_split: bool = True    # Fortune Teller picks pairs that split the suspects instead of the top two
     tests_virgin: bool = False  # a townsfolk nominates the claimed Virgin on day 1 to test both
-    vote_memory: int = 10    # suspicion added per push (nomination or vote) of an execution that now looks good
+    vote_memory: int = 10    # how much a remembered push of a now-good-looking execution counts against
+                             # the pusher (everyone remembers votes; this is how much they read into them)
 
 
 PROFILES = {
     "novice": Profile("novice", considers_poison=False, considers_drunk=False,
                       considers_misregistration=False, max_excuses=0,
                       nominate_at=30, vote_at=25, bandwagon=6, saint_caution=10, lookahead=1,
-                      ft_split=False, vote_memory=0),
+                      ft_split=False, vote_memory=5),
     "regular": Profile("regular", considers_misregistration=False, max_excuses=1),
     "veteran": Profile("veteran", max_excuses=3, nominate_at=40, vote_at=35, bandwagon=1, lookahead=6,
                        tests_virgin=True, vote_memory=20),
@@ -132,11 +133,10 @@ class GoodAgent(Agent):
         """The solver's read plus a grudge against players who pushed executions that now look good."""
         b = game.belief_of(self)
         grudge = 0
-        if self.profile.vote_memory:
-            for day, nominator, nominee, voters in game.vote_log:
-                if nominee in game.dead and nominee != s and game.executed_on(day) == nominee \
-                        and b.evil_pct(nominee) < 30 and (s == nominator or s in voters):
-                    grudge += self.profile.vote_memory
+        for v in game.known.votes:
+            if v.nominee != s and game.executed_on(v.day) == v.nominee and b.evil_pct(v.nominee) < 30 \
+                    and (s == v.nominator or s in v.voters):
+                grudge += self.profile.vote_memory
         return min(100, b.suspicion(s) + grudge)
 
     def nominate(self, game, nominated):

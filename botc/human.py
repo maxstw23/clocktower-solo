@@ -28,6 +28,10 @@ class HumanAgent(Agent):
                 raw = self.inp(f"> {prompt} ").strip()
             except EOFError:
                 return default
+            if raw.lower() in ("?", "notes"):
+                for line in self.game.notebook():
+                    self.out(line)
+                continue
             if not raw:
                 return default
             try:

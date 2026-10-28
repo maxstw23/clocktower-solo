@@ -10,7 +10,7 @@ from itertools import combinations, product
 
 from .agents import PROFILES, REFERENCE, EvilAgent, GoodAgent, believe
 from .human import HumanAgent
-from .public import Death, Nomination, Public, Report, Shot, day_tick, night_tick
+from .public import Death, Nomination, Public, Report, Shot, Vote, day_tick, night_tick
 from .roles import ALL_ROLES, FIRST_NIGHT_INFO, KIND, MINIONS, OUTSIDERS, SETUP, TOWNSFOLK, is_evil, pretty
 from .storyteller import Storyteller
 from .worlds import RECLUSE_EXTRA, SPY_EXTRA, Solver
@@ -45,12 +45,12 @@ class Game:
         self.dead = set()
         self.ghosts_used = set()
         self.ever_nominated = set()
-        self.vote_log = []     # (day, nominator, nominee, voters): public
         self.butler_master = None
         self.notes = []        # Storyteller's private log
         self.survived = set()  # evil team memory of failed attacks
         self._beliefs = {}
         self.dusk = None       # record frozen at dusk while a night is running
+        self.private = []      # what the Storyteller told the human, for their notebook
         self._setup(mix, inp)
 
     # --- setup -------------------------------------------------------------------------------
@@ -127,6 +127,8 @@ class Game:
         """Private message to the human player."""
         if self.human is not None:
             self.say(f"  (private) {msg}")
+            when = f"Night {self.night}" if self.dusk is not None or self.day < self.night else f"Day {self.day}"
+            self.private.append(f"{when if self.night else 'Setup'}: {msg}")
 
     def note(self, msg):
         self.notes.append(f"N{self.night}/D{self.day}: {msg}")
@@ -377,10 +379,18 @@ class Game:
                     fakes.append(options[0] if len(options) == 1 else agent.choose_report(self, options))
                 continue
             random.Random(f"lie-{self.seed}-{self.night}-{s}").shuffle(options)
-            options = options[:agent.profile.lookahead]
+            # Everyone remembers what they said before: drop lies that break their own story.
+            before = self._story_cost(s, base)
+            kept = [r for r in options if before is None or (self._story_cost(s, base.plus(r), base) or 99) <= before]
+            options = (kept or options)[:agent.profile.lookahead]
             if options:
                 fakes.append(min(options, key=lambda r: agent.exposure(self, base.plus(r), base)))
         return fakes
+
+    def _story_cost(self, s, pub, base=None):
+        """Fewest excuses under which `s` could be the sober good player they claim to be."""
+        return min((w.excuses for w in self.solver.worlds(pub, base=base) if w.roles[s] == pub.claims[s]),
+                   default=None)
 
     def _fake_options(self, s, kind, agent):
         rng = random.Random(f"fake-{self.seed}-{self.night}-{s}")
@@ -479,7 +489,7 @@ class Game:
                 self.say(f"{self.name(s)} nominates {self.name(t)}.")
                 needed = max((len(self.alive) + 1) // 2, best + 1)
                 voters = self._vote(t, needed, None if tie else block)
-                self.vote_log.append((self.day, s, t, tuple(voters)))
+                self.pub = replace(self.pub, votes=self.pub.votes + (Vote(self.day, s, t, tuple(voters)),))
                 self.say(f"  {len(voters)} vote(s)" + (f": {', '.join(self.name(v) for v in voters)}" if voters else ""))
                 if len(voters) >= (len(self.alive) + 1) // 2:
                     if len(voters) > best:
@@ -541,6 +551,39 @@ class Game:
         else:
             text = f"{nm(d[0])} {'was' if r.kind == 'undertaker' else 'is'} the {pretty(d[1])}"
         return f"N{r.night} {nm(r.seat)} ({pretty(r.kind)}): {text}"
+
+    def notebook(self):
+        """The whole public record, in order, plus what the Storyteller told the human."""
+        pub, nm = self.pub, self.name
+        lines = ["--- Notebook ---"]
+        if pub.claims:
+            lines.append("Claims: " + ", ".join(f"{nm(s)} {pretty(c)}" for s, c in enumerate(pub.claims)))
+        for n in range(1, self.night + 1):
+            died = [nm(d.seat) for d in pub.deaths if d.tick == night_tick(n)]
+            lines.append(f"Night {n}: " + (", ".join(died) + " died." if died else "no deaths."))
+            lines += ["  " + self.describe(r) for r in pub.reports if r.night == n]
+            if n > self.day:
+                continue
+            lines.append(f"Day {n}:")
+            for sh in pub.shots:
+                if sh.day == n:
+                    lines.append(f"  {nm(sh.shooter)} shot {nm(sh.target)}: " + ("died" if sh.killed else "nothing"))
+            for fn in pub.first_noms:
+                if fn.day == n and fn.triggered:
+                    lines.append(f"  {nm(fn.nominator)} nominated {nm(fn.nominee)}: Virgin triggered, {nm(fn.nominator)} executed")
+            for v in pub.votes:
+                if v.day == n:
+                    lines.append(f"  {nm(v.nominator)} -> {nm(v.nominee)}: {len(v.voters)} vote(s)"
+                                 + (f" ({', '.join(nm(x) for x in v.voters)})" if v.voters else ""))
+            ex = self.executed_on(n)
+            lines.append(f"  Executed: {nm(ex)}" if ex is not None else "  No execution.")
+        dead = sorted(self.dead)
+        lines.append("Dead: " + (", ".join(nm(s) + (" (ghost vote used)" if s in self.ghosts_used else "")
+                                           for s in dead) or "nobody"))
+        if self.private:
+            lines.append("Told to you privately:")
+            lines += ["  " + p for p in self.private]
+        return lines
 
     def _reveal(self):
         self.say(f"\n*** {(self.winner or 'nobody (day limit)').upper()} WINS after {self.day} day(s) ***")

@@ -9,7 +9,7 @@ Drunk. Each world carries the excuses it needs, so bounded players can filter wo
 excuses they think of and how many they tolerate (see agents.believe).
 """
 from collections import OrderedDict, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import combinations, permutations, product
 
 from .public import day_tick, night_tick
@@ -308,6 +308,8 @@ class Solver:
 
     def worlds(self, pub, allow_poison=True, allow_misreg=True, base=None):
         """`base`, if given, must be a record that `pub` only adds to; its worlds seed the search."""
+        pub = replace(pub, votes=())  # votes don't constrain roles; don't re-solve on every vote
+        base = base and replace(base, votes=())
         key = (pub, allow_poison, allow_misreg)
         hit = self._cache.get(key)
         if hit is not None:
