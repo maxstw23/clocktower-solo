@@ -38,7 +38,18 @@ POISON_WEIGHT, MISREG_WEIGHT, DRUNK_WEIGHT = 0.1, 0.2, 0.2  # Occam: consider ex
 NIGHT_KILLED_EVIL = 0.1  # the Demon rarely kills its own team
 BLUFF_WEIGHT = 0.2       # a good player is still bluffing
 CHANGE_WEIGHT = 0.7      # per claim change by a good player: having lied costs trust
+FRAMED_WEIGHT = 0.25     # an evil player's made-up information rarely points at their own team
 OF_KIND = {"townsfolk": TOWNSFOLK, "outsider": OUTSIDERS}
+
+
+def frames_team(r, roles):
+    """Whether a (made-up) report points at players who are evil in this world."""
+    d = r.data
+    if r.kind in ("investigator", "fortune_teller") and d[0] is not None:
+        return (r.kind == "investigator" or d[2]) and any(is_evil(roles[x]) for x in d[:2])
+    if r.kind in ("undertaker", "ravenkeeper"):
+        return is_evil(roles[d[0]]) and is_evil(d[1])
+    return False
 
 
 @dataclass(frozen=True)
@@ -278,6 +289,8 @@ def _evaluate(roles, pub, allow_poison, allow_misreg, promos):
     for r in pub.reports:
         if not sober(r.seat) or roles[r.seat] != r.kind:
             weight *= FREE.get(r.kind, 1)
+            if is_evil(roles[r.seat]) and frames_team(r, roles):
+                weight *= FRAMED_WEIGHT
             continue
         if r.kind == "fortune_teller":
             ft_reports.append(r)
