@@ -8,83 +8,114 @@
   :root {
     --bg: #f4f1ea; --panel: #fffdf8; --ink: #22201c; --muted: #6b665c; --line: #ddd6c8;
     --accent: #7a2331; --accent-ink: #fff; --gold: #b8860b; --good: #2f5d8a; --evil: #a3202f;
-    --you: #b8860b; --sel: #2f7d4f; --private-bg: #fbf3d9; --dead: #9a958b;
+    --sel: #2f7d4f; --private-bg: #fbf3d9; --dead: #9a958b; --bubble: #ffffff; --night: #1b2240;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #14161c; --panel: #1d2028; --ink: #e8e4da; --muted: #a29d92; --line: #343846;
       --accent: #c2485b; --accent-ink: #fff; --gold: #d9a632; --good: #6ea3d8; --evil: #e06272;
-      --you: #d9a632; --sel: #4fb47a; --private-bg: #2f2a1c; --dead: #6c6a66;
+      --sel: #4fb47a; --private-bg: #2f2a1c; --dead: #6c6a66; --bubble: #2a2e3a; --night: #0b0e1a;
     }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
-  header h1 { font-size: 17px; margin: 0 12px 0 0; letter-spacing: .3px; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; transition: background .8s; }
+  body.night { background: color-mix(in srgb, var(--night) 55%, var(--bg)); }
+  header { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 17px; margin: 0 8px 0 0; }
   .chip { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; white-space: nowrap; }
   .chip.good { border-color: var(--good); color: var(--good); }
   .chip.evil { border-color: var(--evil); color: var(--evil); }
   .spacer { flex: 1; }
-  button { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+  button, select { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
   button:hover { border-color: var(--muted); }
   button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   button:disabled { opacity: .45; cursor: default; }
-  main { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 5px 10px; }
+  .seg button.on { background: var(--ink); color: var(--panel); }
+  main { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; padding: 16px; max-width: 1420px; margin: 0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
 
   /* table */
-  #table { position: relative; width: 100%; max-width: 620px; aspect-ratio: 1; margin: 0 auto; }
-  #center { position: absolute; inset: 32%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; border-radius: 50%; border: 1px dashed var(--line); }
-  #center .big { font-size: 22px; font-weight: 650; }
+  #tableWrap { position: relative; }
+  #table { position: relative; width: 100%; max-width: 640px; aspect-ratio: 1; margin: 0 auto; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--panel) 92%, var(--gold)) 0%, var(--panel) 70%); border: 1px solid var(--line); }
+  #center { position: absolute; inset: 33%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; border-radius: 50%; border: 1px dashed var(--line); padding: 6px; }
+  #center .big { font-size: 22px; font-weight: 700; }
   #center .small { color: var(--muted); font-size: 13px; }
-  .seat { position: absolute; width: 96px; margin: -40px 0 0 -48px; text-align: center; user-select: none; }
-  .token { width: 58px; height: 58px; margin: 0 auto 3px; border-radius: 50%; border: 2px solid var(--line); background: var(--panel); display: flex; align-items: center; justify-content: center; font-weight: 650; font-size: 15px; position: relative; transition: transform .12s, box-shadow .12s; }
-  .seat.you .token { border-color: var(--you); box-shadow: 0 0 0 3px color-mix(in srgb, var(--you) 30%, transparent); }
+  .seat { position: absolute; width: 104px; margin: -42px 0 0 -52px; text-align: center; user-select: none; cursor: pointer; }
+  .token { width: 58px; height: 58px; margin: 0 auto 3px; border-radius: 50%; border: 2px solid var(--line); background: var(--panel); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; transition: transform .15s, box-shadow .15s; }
+  .seat.you .token { border-color: var(--gold); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 30%, transparent); }
   .seat.mate .token { border-color: var(--evil); }
   .seat.dead .token { background: transparent; color: var(--dead); border-style: dashed; }
   .seat.dead .name { color: var(--dead); text-decoration: line-through; }
-  .seat .ghost { font-size: 11px; color: var(--muted); font-style: italic; }
+  .seat.speaking .token { transform: scale(1.12); box-shadow: 0 0 0 6px color-mix(in srgb, var(--gold) 45%, transparent); }
   .seat .name { font-size: 13px; font-weight: 600; }
-  .seat .claim { font-size: 12px; color: var(--muted); line-height: 1.2; }
-  .seat .role { font-size: 11px; font-weight: 600; }
+  .seat .claim { font-size: 12px; color: var(--muted); line-height: 1.25; }
+  .seat .ghost { font-size: 11px; color: var(--muted); font-style: italic; }
+  .seat .role { font-size: 11px; font-weight: 700; }
   .seat .role.good { color: var(--good); } .seat .role.evil { color: var(--evil); }
-  .seat.pickable { cursor: pointer; }
   .seat.pickable .token { border-color: var(--sel); animation: pulse 1.4s infinite; }
   .seat.picked .token { background: var(--sel); color: #fff; border-color: var(--sel); animation: none; }
   .seat.pickable:hover .token { transform: scale(1.08); }
-  @keyframes pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--sel) 25%, transparent); } }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--sel) 25%, transparent); } }
+  .bubble { position: absolute; z-index: 3; max-width: 230px; background: var(--bubble); border: 1px solid var(--line); border-radius: 12px; padding: 7px 10px; font-size: 13px; line-height: 1.35; box-shadow: 0 4px 14px rgba(0,0,0,.12); pointer-events: none; }
+  .bubble.chat { border-color: var(--good); }
+  .bubble.new { animation: pop .25s ease-out; }
+  @keyframes pop { from { transform: scale(.85); opacity: 0; } }
+  #banner { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 4; }
+  #banner div { background: color-mix(in srgb, var(--night) 88%, transparent); color: #f2e9d0; font-size: 30px; font-weight: 700; padding: 18px 36px; border-radius: 14px; letter-spacing: 1px; opacity: 0; transition: opacity .6s; }
+  #banner.show div { opacity: 1; }
 
   /* prompt */
-  #prompt { margin-top: 14px; min-height: 92px; }
-  #prompt .q { font-weight: 600; margin-bottom: 10px; }
+  #prompt { margin-top: 14px; min-height: 96px; }
+  #prompt .q { font-weight: 650; margin-bottom: 10px; }
   #prompt .opts { display: flex; flex-wrap: wrap; gap: 8px; }
   #prompt .hint { color: var(--muted); font-size: 13px; margin: 6px 0 10px; }
   .waiting { color: var(--muted); display: flex; gap: 8px; align-items: center; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); animation: blink 1s infinite; }
+  .dots span { display: inline-block; width: 7px; height: 7px; margin-right: 3px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+  .dots span:nth-child(2) { animation-delay: .2s; } .dots span:nth-child(3) { animation-delay: .4s; }
   @keyframes blink { 50% { opacity: .2; } }
-  .banner { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+  .banner-end { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
 
   /* side */
-  .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  #roleCard { margin-bottom: 12px; border-left: 4px solid var(--good); }
+  #roleCard.evil { border-left-color: var(--evil); }
+  #roleCard .rname { font-size: 18px; font-weight: 700; }
+  #roleCard .rkind { color: var(--muted); font-size: 13px; margin-left: 6px; }
+  #roleCard .rtext { margin-top: 4px; font-size: 14px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
   .tabs button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
-  #side .pane { height: calc(100vh - 170px); min-height: 360px; overflow-y: auto; padding-right: 6px; }
-  @media (max-width: 900px) { #side .pane { height: 60vh; } }
+  #side .pane { height: calc(100vh - 300px); min-height: 340px; overflow-y: auto; padding-right: 6px; }
+  @media (max-width: 960px) { #side .pane { height: 60vh; } }
   .line { padding: 3px 0; }
   .line.day { margin-top: 14px; font-weight: 700; font-size: 16px; border-top: 1px solid var(--line); padding-top: 10px; }
   .line.sys { color: var(--muted); font-style: italic; }
   .line.say b { margin-right: 4px; }
   .line.private { background: var(--private-bg); border-left: 3px solid var(--gold); padding: 5px 8px; margin: 4px 0; border-radius: 4px; }
-  .line.private::before { content: "Only you: "; font-weight: 600; color: var(--gold); }
+  .line.private .tag { font-weight: 650; color: var(--gold); margin-right: 4px; }
   .line.chat { background: color-mix(in srgb, var(--good) 10%, transparent); border-left: 3px solid var(--good); padding: 5px 8px; margin: 4px 0; border-radius: 4px; }
-  .line.chat::before { content: "In private: "; font-weight: 600; color: var(--good); }
-  .line.result { font-weight: 600; }
-  pre { white-space: pre-wrap; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; margin: 0; }
+  .line.chat .tag { font-weight: 650; color: var(--good); margin-right: 4px; }
+  .line.result { font-weight: 650; }
+  pre { white-space: pre-wrap; font: 13px/1.55 ui-monospace, Menlo, Consolas, "PingFang SC", monospace; margin: 0; }
+  .role-ref { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .role-ref .n { font-weight: 650; }
+  .role-ref .k { font-size: 12px; color: var(--muted); margin-left: 6px; }
+  .role-ref.mine { background: color-mix(in srgb, var(--gold) 12%, transparent); }
+  .role-ref .who { font-size: 12px; color: var(--accent); margin-left: 6px; }
+  .role-ref p { margin: 2px 0 0; font-size: 14px; }
+  h4 { margin: 14px 0 4px; }
+
+  /* modal */
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 20; padding: 16px; }
+  #modal[hidden], [hidden] { display: none !important; }
+  #modal .card { max-width: 480px; width: 100%; max-height: 80vh; overflow-y: auto; }
+  #modal h3 { margin: 0 0 4px; }
 
   /* start */
-  #start { max-width: 560px; margin: 40px auto; }
+  #start { max-width: 580px; margin: 40px auto; }
   #start label { display: block; margin: 12px 0 4px; font-weight: 600; font-size: 14px; }
-  #start input, #start select { font: inherit; width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  #start input, #start select { width: 100%; padding: 8px 10px; background: var(--bg); }
   #start .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   #start .check { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-weight: 400; }
   #start .check input { width: auto; }
@@ -94,156 +125,288 @@
 </head>
 <body>
 <header>
-  <h1>Clocktower Solo</h1>
+  <h1 data-i="title"></h1>
   <span id="you" class="chip" hidden></span>
   <span id="seed" class="chip" hidden></span>
   <span class="spacer"></span>
-  <button id="newBtn" hidden>New game</button>
+  <label id="speedBox" hidden><span data-i="speed"></span>
+    <select id="speed">
+      <option value="slow" data-i="slow"></option><option value="normal" data-i="normal"></option>
+      <option value="fast" data-i="fast"></option><option value="instant" data-i="instant"></option>
+    </select></label>
+  <span class="seg" id="langSeg"><button data-lang="en">EN</button><button data-lang="zh">中文</button></span>
+  <button id="newBtn" hidden data-i="newGame"></button>
 </header>
 
 <section id="start" class="card" hidden>
-  <h2 style="margin-top:0">Trouble Brewing, solo</h2>
-  <p>You take one seat; everyone else at the table is an AI player. Each day, everyone speaks in
-     turn, then nominations and votes. Good players may bluff too, but changing your claim costs trust.
-     Everything said is kept in your notebook.</p>
-  <label for="name">Your name</label>
-  <input id="name" maxlength="20" placeholder="e.g. Max" autocomplete="off">
+  <h2 style="margin-top:0" data-i="startTitle"></h2>
+  <p data-i="startIntro"></p>
+  <label for="name" data-i="yourName"></label>
+  <input id="name" maxlength="20" autocomplete="off">
   <div class="row">
-    <div><label for="players">Players</label>
-      <select id="players"></select></div>
-    <div><label for="seat">Your seat</label>
-      <select id="seat"></select></div>
+    <div><label for="players" data-i="players"></label><select id="players"></select></div>
+    <div><label for="seat" data-i="yourSeat"></label><select id="seat"></select></div>
   </div>
-  <label for="seedIn">Game number (optional, to replay)</label>
-  <input id="seedIn" inputmode="numeric" placeholder="random">
-  <label class="check"><input type="checkbox" id="hints"> Show me hints (a veteran's read of the suspects)</label>
-  <div style="margin-top:18px;display:flex;gap:8px"><button class="primary" id="startBtn">Take your seat</button>
-    <button id="backBtn" hidden>Back to the current game</button></div>
+  <label for="seedIn" data-i="gameNo"></label>
+  <input id="seedIn" inputmode="numeric">
+  <label class="check"><input type="checkbox" id="hints"> <span data-i="hints"></span></label>
+  <div style="margin-top:18px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="primary" id="startBtn" data-i="takeSeat"></button>
+    <button id="backBtn" hidden data-i="back"></button>
+  </div>
   <div class="err" id="startErr"></div>
 </section>
 
 <main id="game" hidden>
-  <div>
-    <div id="table" class="card" style="border-radius:50%;padding:0"><div id="center"></div></div>
+  <div id="tableWrap">
+    <div id="table"><div id="center"></div></div>
+    <div id="banner"><div></div></div>
     <div id="prompt" class="card"></div>
   </div>
-  <div id="side" class="card">
-    <div class="tabs">
-      <button data-tab="story" class="on">Story</button>
-      <button data-tab="notes">Notebook</button>
-      <button data-tab="mine">Only you</button>
+  <div>
+    <div id="roleCard" class="card"></div>
+    <div id="side" class="card">
+      <div class="tabs">
+        <button data-tab="story" class="on" data-i="story"></button>
+        <button data-tab="notes" data-i="notebook"></button>
+        <button data-tab="mine" data-i="onlyYou"></button>
+        <button data-tab="chars" data-i="characters"></button>
+      </div>
+      <div class="pane" id="pane-story"></div>
+      <div class="pane" id="pane-notes" hidden><pre id="notes"></pre></div>
+      <div class="pane" id="pane-mine" hidden></div>
+      <div class="pane" id="pane-chars" hidden></div>
     </div>
-    <div class="pane" id="pane-story"></div>
-    <div class="pane" id="pane-notes" hidden><pre id="notes"></pre></div>
-    <div class="pane" id="pane-mine" hidden></div>
   </div>
 </main>
+<div id="modal" hidden></div>
 
 <script>
+const UI = {
+  en: {
+    title: "Clocktower Solo", speed: "Speed ", slow: "Slow", normal: "Normal", fast: "Fast", instant: "Instant",
+    newGame: "New game", startTitle: "Trouble Brewing, solo",
+    startIntro: "You take one seat; everyone else is an AI player. Each day: introductions, private chats, open discussion, then nominations and votes. Anyone may bluff, even about being evil, but changing your claim in public costs trust. Everything said is kept in your notebook.",
+    yourName: "Your name", players: "Players", yourSeat: "Your seat", gameNo: "Game number (optional, to replay)",
+    hints: "Show me hints (a veteran's read of the suspects)", takeSeat: "Take your seat", back: "Back to the current game",
+    story: "Story", notebook: "Notebook", onlyYou: "Only you", characters: "Characters",
+    random: "Random", seatN: "Seat {n}", playersN: "{n} players", recommended: " (recommended)", slowN: " (slow)",
+    you: "You: {name}, the {role}", game: "Game #{n}", thinking: "The others are thinking…", speakingNow: "{name} is speaking…",
+    claims: "claims {role}", ghost: "ghost vote left", alive: "{a} of {n} alive", youTag: " (you)",
+    onlyYouTag: "Only you:", privateTag: "In private:", pickHint: "Click a highlighted player at the table, or choose below.",
+    pass: "Pass", yes: "Yes, raise my hand", no: "No", confirm: "Confirm", useDefault: "Use {names}",
+    chosen: "Chosen: {names}.", none: "none yet", pickN: "Click {k} players at the table.",
+    good: "Good", evil: "Evil", yourChar: "Your character", claimedBy: "claimed by {names}",
+    over: "{team} wins.", overNoOne: "The game ran out of days.", overHint: "Everyone's true character is now shown at the table. The Story tab has the full Grimoire and the Storyteller's notes.",
+    playAgain: "Play again", close: "Close", history: "What they've said and done", nothing: "Nothing yet.",
+    dead: "dead", phases: { setup: "Setting up", night: "Night", dawn: "Dawn", introductions: "Introductions", "private chats": "Private chats", discussion: "Discussion", nominations: "Nominations", over: "Game over" },
+    dayN: "Day {n}", nightN: "Night {n}", wrong: "Something went wrong:",
+    kinds: { townsfolk: "Townsfolk", outsider: "Outsiders", minion: "Minions", demon: "Demon" },
+  },
+  zh: {
+    title: "血染钟楼 · 单人版", speed: "速度 ", slow: "慢", normal: "正常", fast: "快", instant: "立即",
+    newGame: "新游戏", startTitle: "暗流涌动 · 单人游戏",
+    startIntro: "你占一个座位，其他玩家都由AI扮演。每天依次是：自我介绍、私聊、公开讨论、提名和投票。任何人都可以伪装，甚至伪装成邪恶角色；但公开改口会让人不信任你。所有发言都会记在你的笔记里。",
+    yourName: "你的名字", players: "玩家人数", yourSeat: "你的座位", gameNo: "局号（可选，用于重玩）",
+    hints: "给我提示（老手对嫌疑人的判断）", takeSeat: "入座", back: "回到当前游戏",
+    story: "故事", notebook: "笔记", onlyYou: "仅你可见", characters: "角色",
+    random: "随机", seatN: "{n}号座位", playersN: "{n}名玩家", recommended: "（推荐）", slowN: "（较慢）",
+    you: "你：{name}，{role}", game: "第{n}局", thinking: "其他玩家正在思考……", speakingNow: "{name}正在发言……",
+    claims: "报{role}", ghost: "还有死人票", alive: "存活 {a}/{n}", youTag: "（你）",
+    onlyYouTag: "仅你可见：", privateTag: "私聊：", pickHint: "点击桌上高亮的玩家，或在下面选择。",
+    pass: "跳过", yes: "是，举手", no: "不", confirm: "确认", useDefault: "使用 {names}",
+    chosen: "已选：{names}。", none: "还没有", pickN: "在桌上点击{k}名玩家。",
+    good: "善良", evil: "邪恶", yourChar: "你的角色", claimedBy: "{names}报了这个",
+    over: "{team}获胜。", overNoOne: "游戏达到天数上限。", overHint: "桌上现在显示了每个人的真实角色。“故事”里有完整的魔典和说书人笔记。",
+    playAgain: "再来一局", close: "关闭", history: "他说过和做过的事", nothing: "还没有。",
+    dead: "已死亡", phases: { setup: "准备中", night: "夜晚", dawn: "黎明", introductions: "自我介绍", "private chats": "私聊", discussion: "公开讨论", nominations: "提名", over: "游戏结束" },
+    dayN: "第{n}天", nightN: "第{n}夜", wrong: "出错了：",
+    kinds: { townsfolk: "镇民", outsider: "外来者", minion: "爪牙", demon: "恶魔" },
+  },
+};
 const $ = id => document.getElementById(id);
-let since = 0, game = null, promptId = null, picked = [], view = "start";
-function show(v) {
-  view = v;
-  $("start").hidden = v !== "start"; $("game").hidden = v !== "game";
-  $("newBtn").hidden = v !== "game"; $("backBtn").hidden = !(v === "start" && game);
+let lang = "en", since = 0, game = null, promptId = null, picked = [], view = "start", roles = [], rolesNote = "";
+let lastPhase = null, bubbles = {};
+try { lang = localStorage.getItem("ct-lang") || (navigator.language || "").startsWith("zh") && "zh" || "en"; } catch (e) {}
+const T = (k, vars = {}) => String(UI[lang][k] ?? UI.en[k] ?? k).replace(/\{(\w+)\}/g, (_, v) => vars[v] ?? "");
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+function applyLang() {
+  document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+  document.querySelectorAll("[data-i]").forEach(el => el.textContent = T(el.dataset.i));
+  document.querySelectorAll("#langSeg button").forEach(b => b.classList.toggle("on", b.dataset.lang === lang));
+  $("name").placeholder = lang === "zh" ? "例如：小明" : "e.g. Max";
+  $("seedIn").placeholder = T("random");
+  fillPlayers(); fillSeats();
+}
+document.querySelectorAll("#langSeg button").forEach(b => b.onclick = async () => {
+  lang = b.dataset.lang;
+  try { localStorage.setItem("ct-lang", lang); } catch (e) {}
+  applyLang(); await loadRoles();
+  since = 0; $("pane-story").innerHTML = ""; $("pane-mine").innerHTML = ""; promptId = null;
+});
+
+async function loadRoles() {
+  const r = await (await fetch("/api/roles?lang=" + lang)).json();
+  roles = r.roles; rolesNote = r.note;
+  drawChars();
 }
 
 // ---- start screen -------------------------------------------------------------------------
-for (let n = 5; n <= 15; n++) $("players").add(new Option(`${n} players${n === 8 ? " (recommended)" : n > 10 ? " (slow)" : ""}`, n, n === 8, n === 8));
-function fillSeats() {
-  const n = +$("players").value, s = $("seat"); s.innerHTML = "";
-  s.add(new Option("Random", ""));
-  for (let i = 0; i < n; i++) s.add(new Option(`Seat ${i + 1}`, i));
+function fillPlayers() {
+  const sel = $("players"), cur = +sel.value || 8; sel.innerHTML = "";
+  for (let n = 5; n <= 15; n++) sel.add(new Option(T("playersN", { n }) + (n === 8 ? T("recommended") : n > 10 ? T("slowN") : ""), n, false, n === cur));
 }
-$("players").onchange = fillSeats; fillSeats();
+function fillSeats() {
+  const n = +$("players").value || 8, s = $("seat"), cur = s.value; s.innerHTML = "";
+  s.add(new Option(T("random"), ""));
+  for (let i = 0; i < n; i++) s.add(new Option(T("seatN", { n: i + 1 }), i));
+  s.value = cur && +cur < n ? cur : "";
+}
+$("players").onchange = fillSeats;
 try { $("name").value = localStorage.getItem("ct-name") || ""; } catch (e) {}
 
+function show(v) {
+  view = v;
+  $("start").hidden = v !== "start"; $("game").hidden = v !== "game";
+  $("newBtn").hidden = v !== "game"; $("speedBox").hidden = v !== "game";
+  $("backBtn").hidden = !(v === "start" && game);
+}
 $("startBtn").onclick = async () => {
   const name = $("name").value.trim();
   try { localStorage.setItem("ct-name", name); } catch (e) {}
   const r = await fetch("/api/new", { method: "POST", body: JSON.stringify({
-    name, players: +$("players").value, seat: $("seat").value, seed: $("seedIn").value.trim(), hints: $("hints").checked }) });
+    name, players: +$("players").value, seat: $("seat").value, seed: $("seedIn").value.trim(), hints: $("hints").checked, lang }) });
   if (!r.ok) { $("startErr").textContent = (await r.json()).error; return; }
-  since = 0; promptId = null; picked = []; game = null;
+  since = 0; promptId = null; picked = []; game = null; lastPhase = null; bubbles = {};
   $("pane-story").innerHTML = ""; $("pane-mine").innerHTML = ""; $("prompt").innerHTML = "";
   show("game");
 };
 $("newBtn").onclick = () => show("start");
 $("backBtn").onclick = () => show("game");
+$("speed").onchange = () => fetch("/api/speed", { method: "POST", body: JSON.stringify({ speed: $("speed").value }) });
 
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
   document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
-  ["story", "notes", "mine"].forEach(t => $("pane-" + t).hidden = t !== b.dataset.tab);
+  ["story", "notes", "mine", "chars"].forEach(t => $("pane-" + t).hidden = t !== b.dataset.tab);
 });
 
 // ---- polling --------------------------------------------------------------------------------
 async function poll() {
   try {
-    const r = await fetch("/api/state?since=" + since);
+    const r = await fetch(`/api/state?since=${since}&lang=${lang}`);
     render((await r.json()).game);
   } catch (e) { /* server restarting */ }
-  setTimeout(poll, 400);
+  setTimeout(poll, 300);
 }
 
 function render(g) {
   if (!g || view !== "game") return;
   game = g;
   const you = $("you"); you.hidden = false;
-  you.textContent = `You: ${g.seats[g.you].name}, the ${g.role}`;
+  you.textContent = T("you", { name: g.seats[g.you].name, role: g.role });
   you.className = "chip " + (g.evil ? "evil" : "good");
-  $("seed").hidden = false; $("seed").textContent = `Game #${g.seed}`;
+  $("seed").hidden = false; $("seed").textContent = T("game", { n: g.seed });
+  if (document.activeElement !== $("speed")) $("speed").value = g.speed;
+  const rc = $("roleCard");
+  rc.className = "card" + (g.evil ? " evil" : "");
+  rc.innerHTML = `<div><span class="rname">${esc(g.role)}</span><span class="rkind">${esc(g.kind_name)} · ${esc(g.evil ? T("evil") : T("good"))}</span></div><div class="rtext">${esc(g.ability)}</div>`;
+  document.body.classList.toggle("night", g.phase === "night");
+  if (g.phase !== lastPhase) { phaseBanner(g); lastPhase = g.phase; }
 
-  for (const e of g.log) addLine(e);
+  for (const e of g.log) addLine(e, g);
   if (g.log.length) { since = g.log_len; const p = $("pane-story"); p.scrollTop = p.scrollHeight; }
   $("notes").textContent = g.notebook.join("\n");
   drawTable(g);
   drawPrompt(g);
+  drawChars();
 }
 
-function addLine(e) {
+function phaseBanner(g) {
+  let text = null;
+  if (g.phase === "night") text = T("nightN", { n: g.night });
+  else if (g.phase === "dawn") text = T("dayN", { n: g.day });
+  else if (g.phase === "over") text = (UI[lang].phases || UI.en.phases).over;
+  if (!text) return;
+  const b = $("banner"); b.firstElementChild.textContent = text;
+  b.classList.add("show"); setTimeout(() => b.classList.remove("show"), 1600);
+}
+
+function addLine(e, g) {
   const t = e.text.replace(/^\n+/, "");
   if (!t) return;
   const d = document.createElement("div");
   d.className = "line";
-  const speech = t.match(/^([^:"]{1,48}): (".*)$/);
-  if (e.chat) {
-    d.classList.add("chat");
-    if (speech) { const b = document.createElement("b"); b.textContent = speech[1] + ":"; d.append(b, " " + speech[2]); }
+  const name = e.speaker !== null && e.speaker !== undefined ? g.seats[e.speaker].name : null;
+  if (e.chat || e.private) {
+    d.classList.add(e.chat ? "chat" : "private");
+    const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = T(e.chat ? "privateTag" : "onlyYouTag");
+    d.append(tag);
+    if (e.quote !== null && name) { const b = document.createElement("b"); b.textContent = name + (lang === "zh" ? "：" : ": "); d.append(b, e.quote); }
     else d.append(t);
-  }
-  else if (e.private) { d.classList.add("private"); d.textContent = t; }
-  else if (t.startsWith("===")) { d.classList.add("day"); d.textContent = t.replace(/=/g, "").trim(); }
-  else if (/^(Dawn|Introductions|Private conversations|Discussion|Nominations are open|Vote on)/.test(t) || / step aside to talk privately\.$/.test(t)) { d.classList.add("sys"); d.textContent = t; }
-  else if (speech) { d.classList.add("say"); const b = document.createElement("b"); b.textContent = speech[1] + ":"; d.append(b, " " + speech[2]); }
-  else { if (/vote\(s\)|executed|WINS|dies/.test(t)) d.classList.add("result"); d.textContent = t; }
+  } else if (e.key === "day_header") { d.classList.add("day"); d.textContent = t; }
+  else if (/^(night_falls|dawn_|phase_|vote_on|chats_step|game_start)/.test(e.key)) { d.classList.add("sys"); d.textContent = t; }
+  else if (e.quote !== null && name) { d.classList.add("say"); const b = document.createElement("b"); b.textContent = name + (lang === "zh" ? "：" : ": "); d.append(b, e.quote); }
+  else { if (/^(votes_|executed|winner|virgin|shoot|was_saint|mayor_win|no_execution)/.test(e.key)) d.classList.add("result"); d.textContent = t; }
   $("pane-story").append(d);
-  if (e.private) { const m = d.cloneNode(true); $("pane-mine").append(m); }
+  if (e.private) $("pane-mine").append(d.cloneNode(true));
+  if (name && (e.quote || e.key === "shoot" || e.key.startsWith("nominates"))) {
+    bubbles = { [e.speaker]: { text: e.quote || t, chat: e.chat, until: Date.now() + 5200 } };  // only the latest speaker
+  }
 }
 
 // ---- table ----------------------------------------------------------------------------------
+function seatPos(i, n, r = 38) {
+  const a = -Math.PI / 2 + 2 * Math.PI * i / n;
+  return { x: 50 + r * Math.cos(a), y: 49 + (r - 1) * Math.sin(a), a };
+}
+function abilityOf(key) { const r = roles.find(x => x.role === key); return r ? `${r.name}: ${r.ability}` : ""; }
+
 function drawTable(g) {
   const tbl = $("table");
-  tbl.querySelectorAll(".seat").forEach(x => x.remove());
+  tbl.querySelectorAll(".seat, .bubble").forEach(x => x.remove());
   const p = g.prompt, pickable = p && (p.type === "seat" || p.type === "seats") ? new Set(p.seats) : new Set();
+  const now = Date.now();
   g.seats.forEach((s, i) => {
-    const a = -Math.PI / 2 + 2 * Math.PI * i / g.players;
+    const pos = seatPos(i, g.players);
     const el = document.createElement("div");
     el.className = "seat" + (s.you ? " you" : "") + (!s.alive ? " dead" : "") + (g.evil && s.evil && !s.you && !g.over ? " mate" : "")
-      + (pickable.has(i) ? " pickable" : "") + (picked.includes(i) ? " picked" : "");
-    el.style.left = (50 + 38 * Math.cos(a)) + "%"; el.style.top = (49 + 37 * Math.sin(a)) + "%";
-    const initials = s.name.slice(0, 2);
-    el.innerHTML = `<div class="token">${esc(initials)}</div>
-      <div class="name">${esc(s.name)}${s.you ? " (you)" : ""}</div>
-      ${s.ghost && !g.over ? '<div class="ghost" title="Dead players get one vote for the rest of the game">ghost vote left</div>' : ""}
-      <div class="claim">${s.claim ? "claims " + esc(s.claim) : "&nbsp;"}</div>
-      ${s.role ? `<div class="role ${s.evil ? "evil" : "good"}">${esc(s.role)}</div>` : ""}`;
-    if (pickable.has(i)) el.onclick = () => pickSeat(i);
+      + (pickable.has(i) ? " pickable" : "") + (picked.includes(i) ? " picked" : "") + (g.speaking === i ? " speaking" : "");
+    el.style.left = pos.x + "%"; el.style.top = pos.y + "%";
+    el.innerHTML = `<div class="token">${esc([...s.name].slice(0, 2).join(""))}</div>
+      <div class="name">${esc(s.name)}${s.you ? esc(T("youTag")) : ""}</div>
+      ${s.ghost && !g.over ? `<div class="ghost">${esc(T("ghost"))}</div>` : ""}
+      <div class="claim" title="${esc(abilityOf(s.claim_key))}">${s.claim ? esc(T("claims", { role: s.claim })) : "&nbsp;"}</div>
+      ${s.role ? `<div class="role ${s.evil ? "evil" : "good"}" title="${esc(abilityOf(s.role_key))}">${esc(s.role)}</div>` : ""}`;
+    el.onclick = () => pickable.has(i) ? pickSeat(i) : playerCard(i);
     tbl.append(el);
+    const b = bubbles[i];
+    if (b && b.until > now) {
+      const bp = seatPos(i, g.players, 22);
+      const bub = document.createElement("div");
+      bub.className = "bubble" + (b.chat ? " chat" : "") + (now - (b.until - 5200) < 400 ? " new" : "");
+      bub.textContent = b.text;
+      bub.style.left = `calc(${bp.x}% - 115px)`; bub.style.top = `calc(${bp.y}% - 22px)`;
+      tbl.append(bub);
+    }
   });
-  const phase = { setup: "Setting up", night: "Night", dawn: "Dawn", introductions: "Introductions", "private chats": "Private chats", discussion: "Discussion", nominations: "Nominations", over: "Game over" }[g.phase] || g.phase;
-  const when = g.phase === "night" ? `Night ${g.night}` : g.day ? `Day ${g.day}` : "";
+  const ph = (UI[lang].phases || UI.en.phases)[g.phase] || g.phase;
+  const when = g.phase === "night" ? T("nightN", { n: g.night }) : g.day ? T("dayN", { n: g.day }) : "";
   const alive = g.seats.filter(s => s.alive).length;
-  $("center").innerHTML = `<div class="big">${esc(when)}</div><div>${esc(phase)}</div><div class="small">${alive} of ${g.players} alive</div>`;
+  $("center").innerHTML = `<div class="big">${esc(when)}</div><div>${esc(ph)}</div><div class="small">${esc(T("alive", { a: alive, n: g.players }))}</div>`;
+}
+
+function playerCard(i) {
+  const s = game.seats[i], m = $("modal");
+  m.innerHTML = `<div class="card"><h3>${esc(s.name)}${s.you ? esc(T("youTag")) : ""}${s.alive ? "" : " · " + esc(T("dead"))}</h3>
+    ${s.claim ? `<div class="hint">${esc(T("claims", { role: s.claim }))}</div><p style="margin:4px 0 10px">${esc(abilityOf(s.claim_key))}</p>` : ""}
+    ${s.role ? `<div class="role ${s.evil ? "evil" : "good"}" style="font-weight:700">${esc(s.role)}</div>` : ""}
+    <h4>${esc(T("history"))}</h4>
+    <pre>${esc(s.history.length ? s.history.map(x => x.trim()).join("\n") : T("nothing"))}</pre>
+    <div style="margin-top:12px"><button id="closeModal">${esc(T("close"))}</button></div></div>`;
+  m.hidden = false;
+  m.onclick = e => { if (e.target === m) m.hidden = true; };
+  $("closeModal").onclick = () => m.hidden = true;
 }
 
 function pickSeat(i) {
@@ -253,40 +416,65 @@ function pickSeat(i) {
   drawTable(game); drawPrompt(game, true);
 }
 
+// ---- characters reference -------------------------------------------------------------------
+function drawChars() {
+  const pane = $("pane-chars");
+  if (!roles.length) return;
+  const claimedBy = {};
+  if (game) game.seats.forEach(s => { if (s.claim_key) (claimedBy[s.claim_key] ||= []).push(s.name); });
+  let html = "";
+  for (const kind of ["townsfolk", "outsider", "minion", "demon"]) {
+    html += `<h4>${esc((UI[lang].kinds || UI.en.kinds)[kind])}</h4>`;
+    for (const r of roles.filter(x => x.kind === kind)) {
+      const mine = game && game.role_key === r.role;
+      const who = claimedBy[r.role] ? `<span class="who">${esc(T("claimedBy", { names: claimedBy[r.role].join(lang === "zh" ? "、" : ", ") }))}</span>` : "";
+      html += `<div class="role-ref${mine ? " mine" : ""}"><span class="n">${esc(r.name)}</span>${mine ? `<span class="k">${esc(T("yourChar"))}</span>` : ""}${who}<p>${esc(r.ability)}</p></div>`;
+    }
+  }
+  html += `<p class="hint" style="color:var(--muted)">${esc(rolesNote)}</p>`;
+  if (pane.dataset.html !== html) { pane.innerHTML = html; pane.dataset.html = html; }
+}
+
 // ---- prompt ---------------------------------------------------------------------------------
 function drawPrompt(g, force) {
   const box = $("prompt"), p = g.prompt;
-  if (g.error) { box.innerHTML = `<div class="err">Something went wrong:\n${esc(g.error)}</div>`; return; }
+  if (g.error) { box.innerHTML = `<div class="err">${esc(T("wrong"))}\n${esc(g.error)}</div>`; return; }
   if (g.over) {
     if (promptId !== "over") {
       promptId = "over";
-      box.innerHTML = `<div class="banner">${g.winner ? esc(g.winner[0].toUpperCase() + g.winner.slice(1)) + " wins." : "The game ran out of days."}</div>
-        <div class="hint">Everyone's true character is now shown at the table. The Story tab has the full Grimoire and the Storyteller's notes.</div>
-        <button class="primary" onclick="document.getElementById('newBtn').click()">Play again</button>`;
+      const team = g.winner === "good" ? T("good") : g.winner === "evil" ? T("evil") : null;
+      box.innerHTML = `<div class="banner-end">${esc(team ? T("over", { team }) : T("overNoOne"))}</div>
+        <div class="hint">${esc(T("overHint"))}</div><button class="primary" id="again">${esc(T("playAgain"))}</button>`;
+      $("again").onclick = () => show("start");
     }
     return;
   }
   if (!p) {
-    if (promptId !== null) { promptId = null; picked = []; }
-    box.innerHTML = `<div class="waiting"><span class="dot"></span>The others are thinking…</div>`;
+    promptId = null; picked = [];
+    const who = g.speaking !== null && g.speaking !== undefined ? T("speakingNow", { name: g.seats[g.speaking].name }) : T("thinking");
+    const html = `<div class="waiting"><span class="dots"><span></span><span></span><span></span></span>${esc(who)}</div>`;
+    if (box.dataset.wait !== html) { box.innerHTML = html; box.dataset.wait = html; }
     return;
   }
-  if (p.id === promptId && !force) return;
-  if (p.id !== promptId) { picked = []; promptId = p.id; drawTable(g); }
+  box.dataset.wait = "";
+  const key = p.id + lang;
+  if (key === promptId && !force) return;
+  if (key !== promptId) { picked = []; promptId = key; drawTable(g); }
   const name = s => g.seats[s].name;
   let html = `<div class="q">${esc(p.text)}</div>`;
   if (p.type === "choose") {
     html += `<div class="opts">${p.labels.map((l, i) => `<button class="${i === p.default ? "primary" : ""}" data-v="${i}">${esc(l)}</button>`).join("")}</div>`;
   } else if (p.type === "yesno") {
-    html += `<div class="opts"><button class="primary" data-yes="1">Yes, raise my hand</button><button data-yes="0">No</button></div>`;
+    html += `<div class="opts"><button class="primary" data-yes="1">${esc(T("yes"))}</button><button data-yes="0">${esc(T("no"))}</button></div>`;
   } else if (p.type === "seat") {
-    html += `<div class="hint">Click a highlighted player at the table, or choose below.</div><div class="opts">`
-      + p.seats.map(s => `<button data-v="${s}">${esc(name(s))}</button>`).join("")
-      + (p.default === null ? `<button class="primary" data-pass="1">Pass</button>` : "") + `</div>`;
+    html += `<div class="hint">${esc(T("pickHint"))}</div><div class="opts">`
+      + p.seats.map(s => `<button data-v="${s}" class="${s === p.default ? "primary" : ""}">${esc(name(s))}</button>`).join("")
+      + (p.default === null ? `<button class="primary" data-pass="1">${esc(T("pass"))}</button>` : "") + `</div>`;
   } else if (p.type === "seats") {
-    html += `<div class="hint">Click ${p.k} players at the table. Chosen: ${picked.map(name).map(esc).join(", ") || "none yet"}.</div>
-      <div class="opts"><button class="primary" id="confirm" ${picked.length === p.k ? "" : "disabled"}>Confirm</button>
-      <button id="dflt">Use ${p.default.map(name).map(esc).join(" & ")}</button></div>`;
+    const sep = lang === "zh" ? "、" : ", ";
+    html += `<div class="hint">${esc(T("pickN", { k: p.k }))} ${esc(T("chosen", { names: picked.map(name).join(sep) || T("none") }))}</div>
+      <div class="opts"><button class="primary" id="confirm" ${picked.length === p.k ? "" : "disabled"}>${esc(T("confirm"))}</button>
+      <button id="dflt">${esc(T("useDefault", { names: p.default.map(name).join(" & ") }))}</button></div>`;
   }
   box.innerHTML = html;
   box.querySelectorAll("[data-v]").forEach(b => b.onclick = () => answer(+b.dataset.v));
@@ -303,13 +491,14 @@ async function answer(value) {
   picked = []; game.prompt = null; drawTable(game); drawPrompt(game);
 }
 
-function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
-
 (async () => {
-  const r = await fetch("/api/state?since=0");
+  applyLang();
+  await loadRoles();
+  const r = await fetch(`/api/state?since=0&lang=${lang}`);
   game = (await r.json()).game;
   show(game ? "game" : "start");
   poll();
+  setInterval(() => { if (game && view === "game") drawTable(game); }, 1000);  // let speech bubbles expire
 })();
 </script>
 </body>

@@ -8,17 +8,20 @@ Simplifications in this version: the Imp never star-passes, the Mayor never boun
 Spy and Recluse only misregister for information (not for the Slayer or Virgin).
 """
 import random
+import time
 from dataclasses import replace
 from itertools import combinations, product
 
 from .agents import PROFILES, REFERENCE, EvilAgent, GoodAgent, believe
 from .human import HumanAgent, TerminalIO
+from .i18n import AbilityText, L, M, R, S, render
 from .public import Death, Nomination, Public, Report, Shot, Vote, Whisper, day_tick, night_tick
-from .roles import ALL_ROLES, FIRST_NIGHT_INFO, KIND, MINIONS, OUTSIDERS, SETUP, TOWNSFOLK, WILD, is_evil, pretty
+from .roles import ALL_ROLES, FIRST_NIGHT_INFO, KIND, MINIONS, OUTSIDERS, SETUP, TOWNSFOLK, WILD, is_evil
 from .storyteller import Storyteller
 from .worlds import RECLUSE_EXTRA, SPY_EXTRA, Solver
 
 NAMES = ("Ada", "Ben", "Cleo", "Dev", "Eli", "Fay", "Gus", "Hana", "Ivo", "Jun", "Kai", "Lea", "Max", "Nia", "Oto")
+NAMES_ZH = ("安娜", "博文", "晨曦", "大伟", "恩泽", "芳芳", "国栋", "海燕", "一鸣", "俊杰", "凯文", "丽娜", "明轩", "妮妮", "欧阳")
 PING = {"washerwoman": TOWNSFOLK, "librarian": OUTSIDERS, "investigator": MINIONS}
 ZERO = (None, None, None)
 BLUFF_ORDER = ("washerwoman", "librarian", "investigator", "chef", "undertaker", "empath", "monk",
@@ -27,7 +30,7 @@ BLUFF_ORDER = ("washerwoman", "librarian", "investigator", "chef", "undertaker",
 
 class Game:
     def __init__(self, players=10, seed=0, mix=("novice", "regular", "veteran"), out=print, check=False,
-                 human=None, io=None, hints=False, name=None):
+                 human=None, io=None, hints=False, name=None, lang="en", pace=None):
         if players not in SETUP:
             raise ValueError(f"Trouble Brewing supports 5-15 players, not {players}")
         self.n = players
@@ -36,11 +39,17 @@ class Game:
         self.check = check  # assert the true world is never eliminated (solver soundness)
         self.human = human  # seat played by a person, or None
         self.hints = hints  # show the human a veteran's read of the record each day
-        self.names = list(NAMES[:players])
+        pool = NAMES_ZH if lang == "zh" else NAMES
+        self.names = list(pool[:players])
         if human is not None and name:
-            self.names = [n for n in NAMES if n.lower() != name.lower()][:players]
+            self.names = [n for n in pool if n.lower() != name.lower()][:players]
             self.names[human] = name
-        self.log = []          # (text, private, chat) for every line said, in order
+        self.lang = lang       # language for `out` (the web page renders in the reader's language)
+        self.pace = pace       # pace(kind) -> seconds to wait before a line appears (web play)
+        self.speaking = None   # seat currently speaking, while paced
+        self.log = []          # every line said, in order: dicts with m, private, chat, speaker
+        self.suggest = {}      # evil human's suggestions to AI teammates: "kill"/"poison" -> seat
+        self.replied = set()   # (day, seat): already answered an accusation today
         self.whispers = []     # everything said in private groups
         self.claim_seq = {}    # seat -> order number of their latest public claim
         self._seq = 0
@@ -107,20 +116,17 @@ class Game:
         io = io or TerminalIO(out=self.out or (lambda msg: None))
         agent = HumanAgent(h, self.perceived[h], self, io)
         self.agents[h] = agent
-        self.tell(f"You are {self.name(h)}. Players clockwise: " + ", ".join(self.name(s) for s in range(self.n)) + ".")
-        self.tell(f"Your character: {pretty(self.perceived[h])}.")
+        self.tell(M("you_are", me=S(h), players=L(S(s) for s in range(self.n))))
+        self.tell(M("your_char", role=R(self.perceived[h]), ability=AbilityText(self.perceived[h])))
         if h not in self.team:
-            self.tell("You are good. You may claim your character truthfully, bluff, or keep quiet; "
-                      "but if you change your claim later, people will trust you less.")
+            self.tell(M("you_good"))
             return
         agent.team, agent.survived = self.team, self.survived
-        self.tell("You are EVIL. Your team: " + ", ".join(
-            f"{self.name(s)} ({pretty(self.roles[s])})" for s in sorted(self.team)) + ".")
+        self.tell(M("you_evil", team=L(M("seat_role", p=S(s), role=R(self.roles[s])) for s in sorted(self.team))))
         if h == self.demon:
-            self.tell("Demon bluffs (good characters not in play): " + ", ".join(pretty(b) for b in self.bluffs) + ".")
+            self.tell(M("bluffs", roles=L(R(b) for b in self.bluffs)))
         mates = [s for s in self.team if s != h]
-        self.tell("Your teammates plan to claim: " + ", ".join(
-            f"{self.name(s)} as {pretty(self.planned_claims[s])}" for s in mates) + ".")
+        self.tell(M("mates_claim", list=L(M("as", p=S(s), role=R(self.planned_claims[s])) for s in mates)))
 
     # --- helpers -----------------------------------------------------------------------------
 
@@ -131,21 +137,38 @@ class Game:
     def name(self, s):
         return self.names[s]
 
-    def say(self, msg="", private=False, chat=False):
+    def m(self, key, **args):
+        """A message with a phrasing picked by seed (some keys have several ways to say them)."""
+        return M(key, v=(self.seed * 7 + len(self.log) * 13) % 97, **args)
+
+    def text(self, m, lang=None):
+        return render(m, lang or self.lang, self.names)
+
+    def say(self, m, private=False, chat=False, speaker=None):
         """`private`: only the human sees it. `chat`: said in a private group the human is in."""
-        self.log.append((msg, private, chat))
+        if self.pace and (self.human is None or not private or chat or speaker is None):
+            kind = "speech" if speaker is not None else "private" if private else "event"
+            self.speaking = speaker
+            time.sleep(self.pace(kind))
+            self.speaking = None
+        self.log.append({"m": m, "private": private, "chat": chat, "speaker": speaker})
         if self.out:
-            self.out(f"  (in private) {msg}" if chat else f"  (private) {msg}" if private else msg)
+            text = self.text(m)
+            self.out(f"  (in private) {text}" if chat else f"  (private) {text}" if private else text)
+
+    def speech(self, s, msg, private=False, chat=False):
+        self.say(M("speech", p=S(s), text=msg), private=private, chat=chat, speaker=s)
 
     def tell(self, msg):
         """Private message to the human player."""
         if self.human is not None:
             self.say(msg, private=True)
-            when = f"Night {self.night}" if self.dusk is not None or self.day < self.night else f"Day {self.day}"
-            self.private.append(f"{when if self.night else 'Setup'}: {msg}")
+            when = (M("when_night", n=self.night) if self.dusk is not None or self.day < self.night
+                    else M("when_day", n=self.day)) if self.night else M("when_setup")
+            self.private.append(M("nb_private", when=when, msg=msg))
 
     def note(self, msg):
-        self.notes.append(f"N{self.night}/D{self.day}: {msg}")
+        self.notes.append(M("note_line", n=self.night, d=self.day, msg=msg))
 
     @property
     def known(self):
@@ -225,7 +248,7 @@ class Game:
     # --- main loop ---------------------------------------------------------------------------
 
     def run(self, max_days=12):
-        self.say(f"Game #{self.seed}: {self.n} players.")
+        self.say(M("game_start", seed=self.seed, n=self.n))
         self._night()
         while self.winner is None and self.day < max_days:
             self._day()
@@ -248,12 +271,12 @@ class Game:
                 return
             self.roles[sw] = "imp"
             self.demon = sw
-            self.note(f"Scarlet Woman {self.name(sw)} becomes the Imp")
+            self.note(M("note_sw", t=S(sw)))
             if sw == self.human:
-                self.tell("The Demon died: you are now the Imp.")
+                self.tell(M("now_imp"))
         if cause == "execution" and self.roles[s] == "saint" and self.poisoned != s:
             self.winner = "evil"
-            self.say(f"{self.name(s)} was the Saint!")
+            self.say(M("was_saint", p=S(s)))
         elif len(self.alive) <= 2 or set(self.alive) <= self.team:
             self.winner = "evil"
 
@@ -266,6 +289,7 @@ class Game:
         self.prev_executed = executed
         self.poisoned = None
         self.dusk = self.pub
+        self.say(M("night_falls", n=self.night))
 
         def acting(role):
             return [s for s in self.alive if self.perceived[s] == role]
@@ -273,7 +297,7 @@ class Game:
         for s in self.alive:
             if self.roles[s] == "poisoner":
                 self.poisoned = self.agents[s].poison_pick(self)
-                self.note(f"Poisoner poisons {self.name(self.poisoned)}")
+                self.note(M("note_poison", t=S(self.poisoned)))
         if self.night == 1:
             order = FIRST_NIGHT_INFO
         else:
@@ -287,7 +311,7 @@ class Game:
             if self.demon in self.alive and self.poisoned != self.demon:
                 t = self.agents[self.demon].kill_pick(self)
                 if t == protect or (self.roles[t] == "soldier" and self.poisoned != t):
-                    self.note(f"Imp attacks {self.name(t)}, who survives")
+                    self.note(M("note_survive", t=S(t)))
                     self.survived.add(t)
                 else:
                     self._kill(t, "night")
@@ -304,10 +328,9 @@ class Game:
             if self.roles[s] == "butler":
                 self.butler_master = self.agents[s].butler_pick(self)
         if self.human in self.alive and self.roles[self.human] == "spy":
-            self.tell("Spy, the Grimoire: " + ", ".join(
-                f"{self.name(s)} {pretty(self.roles[s])}" + (" (poisoned)" if s == self.poisoned else "")
-                + (f" (thinks {pretty(self.drunk_as)})" if self.roles[s] == "drunk" else "")
-                for s in range(self.n)))
+            self.tell(M("spy_grim", list=L(M("grim_entry", p=S(s), role=R(self.roles[s]), flags=L(
+                ([M("flag_poisoned")] if s == self.poisoned else [])
+                + ([M("flag_thinks", role=R(self.drunk_as))] if self.roles[s] == "drunk" else []))) for s in range(self.n))))
 
     def _info(self, s, kind, executed=None):
         malf = self.roles[s] == "drunk" or self.poisoned == s
@@ -320,10 +343,10 @@ class Game:
         report = self.st.choose(self, options)
         self.agents[s].inbox.append(report)
         if s == self.human:
-            self.tell("You learn: " + self.describe(report).split(": ", 1)[1])
+            self.tell(M("learn", info=self._info_text(report)))
         if malf:
-            why = "drunk" if self.roles[s] == "drunk" else "poisoned"
-            self.note(f"{self.name(s)} ({why}) shown: {self.describe(report)}")
+            why = M("why_drunk") if self.roles[s] == "drunk" else M("why_poisoned")
+            self.note(M("note_shown", p=S(s), why=why, info=self.describe(report)))
 
     def _registers_as(self, s, pool):
         r = self.roles[s]
@@ -393,21 +416,22 @@ class Game:
     def _day(self):
         self.day += 1
         self.dusk = None
+        self.suggest = {}
         self.phase = "dawn"
-        self.say(f"\n=== Day {self.day} ===")
-        died = [self.name(d.seat) for d in self.pub.deaths if d.tick == night_tick(self.night)]
-        self.say("Dawn: " + (", ".join(died) + " died in the night." if died else "nobody died."))
+        self.say(M("day_header", d=self.day))
+        died = [S(d.seat) for d in self.pub.deaths if d.tick == night_tick(self.night)]
+        self.say(M("dawn_deaths", list=L(died, conj=True)) if died else M("dawn_none"))
         self._show_hint()
         k = self.day % self.n
         order = [(k + i) % self.n for i in range(self.n)]
         if self.day == 1:
             self.phase = "introductions"
-            self.say("Introductions: everyone says who they are.")
+            self.say(M("phase_intro"))
             for s in order:
                 self._introduce(s)
         self._private_chats(order)
         self.phase = "discussion"
-        self.say("Discussion: everyone speaks once, in turn.")
+        self.say(M("phase_discussion"))
         for s in order:
             self._speak(s)
             if self.winner:
@@ -428,15 +452,17 @@ class Game:
         self._seq += 1
         self.claim_seq[s] = self._seq
         if before is None:
-            self.say(f'{self.name(s)}: "I am the {pretty(role)}."')
+            self.speech(s, self.m("claim", role=R(role)))
         else:
-            self.say(f'{self.name(s)}: "I wasn\'t telling the truth. I\'m not the {pretty(before)}, '
-                     f'I\'m the {pretty(role)}."')
+            self.speech(s, self.m("claim_change", old=R(before), new=R(role)))
 
     def _publish(self, *reports):
         self.pub = self.pub.plus(*reports)
         for r in reports:
-            self.say(f'{self.name(r.seat)}: "Night {r.night}, my {pretty(r.kind)} ability: {self._info_text(r)}."')
+            self.speech(r.seat, self._report_msg(r))
+
+    def _report_msg(self, r):
+        return self.m("report", n=r.night, role=R(r.kind), info=self._info_text(r))
 
     def _info_nights(self, s, kind, include_reported=False):
         """Nights on which a `kind` would have had info that this player hasn't reported yet."""
@@ -462,7 +488,7 @@ class Game:
     def _private_chats(self, order):
         """Players step aside in small groups. Each player is in at most one group a day."""
         self.phase = "private chats"
-        self.say("Private conversations: players may step aside in small groups.")
+        self.say(M("phase_chats"))
         busy = set()
         for s in order:
             if s in busy:
@@ -474,7 +500,7 @@ class Game:
             joined = [x for x in invited if self.agents[x].accept(self, s, invited)]
             declined = [x for x in invited if x not in joined]
             if s == self.human and declined:
-                self.tell(", ".join(self.name(x) for x in declined) + " declined to talk with you.")
+                self.tell(M("declined", list=L((S(x) for x in declined), conj=True)))
             if not joined:
                 continue
             group = tuple(sorted([s, *joined]))
@@ -489,24 +515,32 @@ class Game:
             return
         public = self.pub.claims[s] if self.pub.claims else None
         if claim:
-            line = f"Between us: I'm really the {pretty(claim)}." if public and public != claim else f"I'm the {pretty(claim)}."
+            line = M("w_really" if public and public != claim else "w_claim", role=R(claim))
         elif report:
-            line = f"Night {report.night}, my {pretty(report.kind)} ability: {self._info_text(report)}."
+            line = self._report_msg(report)
         else:
             line = text
-        self.say(f'{self.name(s)}: "{line}"', private=True, chat=True)
+        self.speech(s, line, private=True, chat=True)
 
     def _chat(self, group):
-        others = lambda s: ", ".join(self.name(x) for x in group if x != s)
         if self.human in group:
-            self.say(f"You step aside with {others(self.human)}.", private=True, chat=True)
+            self.say(M("you_step", list=L((S(x) for x in group if x != self.human), conj=True)), private=True, chat=True)
         else:
-            self.say(", ".join(self.name(x) for x in group[:-1]) + f" and {self.name(group[-1])} step aside to talk privately.")
+            self.say(M("chats_step", list=L((S(x) for x in group), conj=True)))
         for s in group:
             if s == self.human:
                 self._human_chat(group)
                 continue
             agent = self.agents[s]
+            mates = [x for x in group if x != s and x in self.team]
+            if s in self.team and mates:
+                # Among the evil team, a private chat is for making plans.
+                self._whisper(s, group, text=M("e_role", role=R(self.roles[s]), claim=R(self.pub.claims[s])))
+                if self.roles[s] == "poisoner":
+                    self._whisper(s, group, text=M("e_poison", t=S(agent.poison_pick(self))))
+                elif s == self.demon and self.day >= 1:
+                    self._whisper(s, group, text=M("e_kill", t=S(agent.kill_pick(self))))
+                continue
             if s not in self.team and self.pub.claims[s] != agent.role:
                 # A hidden player confides their real character and info to people they trust.
                 self._whisper(s, group, claim=agent.role)
@@ -514,38 +548,50 @@ class Game:
                     self._whisper(s, group, report=r)
             said = agent.statement(self)
             if said:
-                self._whisper(s, group, text=f"I suspect {self.name(said[0])}: {said[1]}.")
+                self._whisper(s, group, text=self.m("suspect", t=S(said[0]), why=said[1]))
             else:
-                self._whisper(s, group, text="I don't have a strong read on anyone yet.")
+                self._whisper(s, group, text=self.m("no_read"))
 
     def _human_chat(self, group):
         h = self.human
         io = self.agents[h].io
         listener = next(x for x in group if x != h)
+        mates = [x for x in group if x != h and x in self.team] if h in self.team else []
         while True:
             told = self.record_for(listener).claims[h] if self.pub.claims else None
-            acts = [("claim", "Tell them your character")]
+            acts = [("claim", M("c_claim"))]
             if told and self._info_nights(h, told, include_reported=True):
-                acts.append(("share", f"Tell them what your {pretty(told)} ability showed you"))
-            acts += [("accuse", "Tell them whom you suspect"), ("done", "Done talking")]
-            act = acts[io.choose("You're talking privately. What do you say?", [a[1] for a in acts],
-                                 default=len(acts) - 1)][0]
+                acts.append(("share", M("c_share", role=R(told))))
+            acts.append(("accuse", M("c_accuse")))
+            if any(x == self.demon for x in mates):
+                acts.append(("kill", M("c_kill")))
+            if any(self.roles[x] == "poisoner" for x in mates):
+                acts.append(("poison", M("c_poison")))
+            acts.append(("done", M("c_done")))
+            act = acts[io.choose(M("q_chat"), [a[1] for a in acts], default=len(acts) - 1)][0]
             if act == "done":
                 return
             if act == "claim":
                 self._human_claim(group)
             elif act == "share":
                 self._human_share(told, group)
-            else:
-                t = io.seat("Whom do you suspect?", [s for s in self.alive if s != h])
+            elif act in ("kill", "poison"):
+                targets = [s for s in self.alive if s not in self.team]
+                t = io.seat(M("q_kill_suggest" if act == "kill" else "q_poison_suggest"), targets)
                 if t is not None:
-                    self._whisper(h, group, text=f"I suspect {self.name(t)}.")
+                    self.suggest[act] = t
+                    helper = next(x for x in mates if (x == self.demon if act == "kill" else self.roles[x] == "poisoner"))
+                    self._whisper(h, group, text=M("s_kill" if act == "kill" else "s_poison", t=S(t)))
+                    self._whisper(helper, group, text=M("e_ok", t=S(t)))
+            else:
+                t = io.seat(M("q_whom_suspect"), [s for s in self.alive if s != h])
+                if t is not None:
+                    self._whisper(h, group, text=M("suspect_plain", t=S(t)))
 
     def _introduce(self, s):
         if s == self.human:
             agent = self.agents[s]
-            if agent.io.choose("Introductions: what do you tell the table?",
-                               ["Claim a character", "Stay silent for now"], default=0) == 0:
+            if agent.io.choose(M("q_intro"), [M("i_claim"), M("i_silent")], default=0) == 0:
                 self._human_claim()
             return
         agent = self.agents[s]
@@ -579,13 +625,21 @@ class Game:
         said = agent.statement(self)
         if said:
             t, why = said
-            self.say(f'{self.name(s)}: "I suspect {self.name(t)}: {why}."')
+            self.speech(s, self.m("suspect", t=S(t), why=why))
+            self._reply(t)
+
+    def _reply(self, t):
+        """An accused AI player answers back, once a day."""
+        if t == self.human or t in self.dead or (self.day, t) in self.replied:
+            return
+        self.replied.add((self.day, t))
+        claim = self.pub.claims[t] if self.pub.claims else None
+        self.speech(t, self.m("reply", role=R(claim)) if claim else M("reply_silent"))
 
     def _shoot(self, s, t):
         self.agents[s].slayer_used = True
         hit = self.roles[s] == "slayer" and self.poisoned != s and t == self.demon
-        self.say(f'{self.name(s)}: "I\'m the Slayer, and I shoot {self.name(t)}." '
-                 + (f"{self.name(t)} dies!" if hit else "Nothing happens."))
+        self.say(M("shoot", p=S(s), t=S(t), result=M("shot_dies", t=S(t)) if hit else M("shot_nothing")), speaker=s)
         self.pub = replace(self.pub, shots=self.pub.shots + (Shot(self.day, s, t, hit),))
         if hit:
             self._kill(t, "slayer")
@@ -616,15 +670,15 @@ class Game:
         agent, io = self.agents[h], self.agents[h].io
         while True:
             claim = self.pub.claims[h] if self.pub.claims else None
-            acts = [("claim", "Claim a character" if claim is None else f"Change your claim (now: {pretty(claim)})")]
+            acts = [("claim", M("a_claim") if claim is None else M("a_change", role=R(claim)))]
             if claim is not None and self._info_nights(h, claim):
-                acts.append(("share", f"Tell what your {pretty(claim)} ability showed you"))
+                acts.append(("share", M("a_share", role=R(claim))))
             if h not in self.dead and not defending:
-                acts.append(("accuse", "Say whom you suspect"))
+                acts.append(("accuse", M("a_accuse")))
                 if not agent.slayer_used and "slayer" in (claim, self.perceived[h]):
-                    acts.append(("shoot", "Use the Slayer's shot"))
-            acts.append(("done", "Done speaking"))
-            prompt = "You've been nominated. What do you say?" if defending else "Your turn to speak."
+                    acts.append(("shoot", M("a_shoot")))
+            acts.append(("done", M("a_done")))
+            prompt = M("q_defend") if defending else M("q_turn")
             act = acts[io.choose(prompt, [a[1] for a in acts], default=len(acts) - 1)][0]
             if act == "done":
                 return
@@ -633,11 +687,12 @@ class Game:
             elif act == "share":
                 self._human_share(claim)
             elif act == "accuse":
-                t = io.seat("Whom do you suspect?", [s for s in self.alive if s != h])
+                t = io.seat(M("q_whom_suspect"), [s for s in self.alive if s != h])
                 if t is not None:
-                    self.say(f'{self.name(h)}: "I suspect {self.name(t)}."')
+                    self.speech(h, M("suspect_plain", t=S(t)))
+                    self._reply(t)
             elif act == "shoot":
-                t = io.seat("Shoot whom?", [s for s in self.alive if s != h])
+                t = io.seat(M("q_shoot"), [s for s in self.alive if s != h])
                 if t is not None:
                     self._claim(h, "slayer")
                     self._shoot(h, t)
@@ -647,13 +702,14 @@ class Game:
     def _human_claim(self, group=None):
         h = self.human
         io = self.agents[h].io
-        mine = [] if h in self.team else [self.perceived[h]]
+        mine = [self.perceived[h]] if h not in self.team else ([self.roles[h]] if group and any(
+            x in self.team and x != h for x in group) else [])
         bluffs = self.bluffs if h == self.demon else []
         first = mine + [b for b in bluffs if b not in mine]
-        roles = first + [r for r in TOWNSFOLK + OUTSIDERS if r not in first and r != "drunk"]
-        labels = [pretty(r) + (" (your character)" if r in mine else " (Demon bluff)" if r in bluffs else "")
-                  for r in roles]
-        role = roles[io.choose("Which character do you claim to be?", labels, default=0)]
+        roles = first + [r for r in ALL_ROLES if r not in first and r != "drunk"]
+        labels = [M("lbl_yours" if r in mine else "lbl_bluff" if r in bluffs else "lbl_evil" if is_evil(r)
+                    else "lbl_role", role=R(r)) for r in roles]
+        role = roles[io.choose(M("q_which_char"), labels, default=0)]
         if group:
             self._whisper(h, group, claim=role)
         else:
@@ -664,31 +720,31 @@ class Game:
         agent, io = self.agents[h], self.agents[h].io
         nights = self._info_nights(h, kind, include_reported=bool(group))
         night = nights[0] if len(nights) == 1 else nights[io.choose(
-            "Which night?", [f"Night {n}" for n in nights], default=len(nights) - 1)]
+            M("q_which_night"), [M("lbl_night", n=n) for n in nights], default=len(nights) - 1)]
         real = [r for r in agent.inbox if r.kind == kind and r.night == night]
         others = [s for s in range(self.n) if s != h]
         if kind == "fortune_teller":
             default = list(real[0].data[:2]) if real else others[:2]
-            a, b = sorted(io.seats(f"Night {night}: which two players did you choose?", others, 2, default))
-            yes = io.choose("And the answer you got?", ["no", "YES"], default=int(real[0].data[2]) if real else 0)
+            a, b = sorted(io.seats(M("q_ft_pick", n=night), others, 2, default))
+            yes = io.choose(M("q_ft_answer"), [M("no"), M("yes")], default=int(real[0].data[2]) if real else 0)
             report = Report(h, night, kind, (a, b, bool(yes)))
         elif kind == "monk":
             alive = [s for s in self.alive if s != h]
-            t = io.seat(f"Night {night}: whom did you protect?", alive, real[0].data[0] if real else alive[0])
+            t = io.seat(M("q_monk_pick", n=night), alive, real[0].data[0] if real else alive[0])
             report = Report(h, night, kind, (t,))
         else:
             opts = list(real) + [Report(h, night, kind, d) for d in self._fake_options(h, kind, night)
                                  if not real or d != real[0].data]
-            labels = [self._info_text(r) + (" (what you really learned)" if r in real else "") for r in opts]
+            labels = [M("lbl_real", info=self._info_text(r)) if r in real else self._info_text(r) for r in opts]
             if kind in PING:
-                labels.append("Something else...")
-            i = io.choose(f"Night {night}: what do you say your {pretty(kind)} ability showed you?", labels, 0)
+                labels.append(M("lbl_else"))
+            i = io.choose(M("q_info", n=night, role=R(kind)), labels, 0)
             if i < len(opts):
                 report = opts[i]
             else:
-                a, b = sorted(io.seats("Which two players?", others, 2, others[:2]))
+                a, b = sorted(io.seats(M("q_two"), others, 2, others[:2]))
                 pool = list(PING[kind])
-                report = Report(h, night, kind, (a, b, pool[io.choose("As which character?", [pretty(r) for r in pool], 0)]))
+                report = Report(h, night, kind, (a, b, pool[io.choose(M("q_as_which"), [R(r) for r in pool], 0)]))
         if group:
             self._whisper(h, group, report=report)
             return
@@ -740,17 +796,16 @@ class Game:
         agent = self.agents[self.human]
         b = self.public_belief() if self.human in self.team else self.belief_of(agent)
         top = sorted((s for s in self.alive if s != self.human), key=lambda s: -b.suspicion(s))[:4]
-        self.tell(f"Hint ({b.count} possible worlds): most suspicious "
-                  + ", ".join(f"{self.name(s)} {b.suspicion(s)}" for s in top))
+        self.tell(M("hint", k=b.count, list=L(M("seat_pct", p=S(s), pct=b.suspicion(s)) for s in top)))
 
     def _show_reads(self):
         if not self.out or self.human is not None:
             return
         b = self.public_belief()
         top = sorted(self.alive, key=lambda s: -b.suspicion(s))[:3]
-        self.say(f"  [town read: {b.count} worlds, ~{b.candidates():.1f} Demon candidates "
-                 f"(Storyteller target {self.st.target(self):.1f}); most suspected: "
-                 + ", ".join(f"{self.name(s)} {b.suspicion(s)}" for s in top) + "]")
+        self.say(M("raw", text=f"  [town read: {b.count} worlds, ~{b.candidates():.1f} Demon candidates "
+                                f"(Storyteller target {self.st.target(self):.1f}); most suspected: "
+                                + ", ".join(f"{self.name(s)} {b.suspicion(s)}" for s in top) + "]"))
         reads = []
         for s in self.alive:
             ag = self.agents[s]
@@ -759,10 +814,10 @@ class Game:
             pb = self.belief_of(ag)
             t = ag.rank([x for x in self.alive if x != s], lambda x: -pb.suspicion(x))[0]
             reads.append(f"{self.name(s)}({ag.profile.name[0]}{'!' if pb.relaxed else ''})→{self.name(t)} {pb.suspicion(t)}")
-        self.say("  [reads: " + ", ".join(reads) + "]")
+        self.say(M("raw", text="  [reads: " + ", ".join(reads) + "]"))
 
     def _nominations(self):
-        self.say("Nominations are open.")
+        self.say(M("phase_noms"))
         self._show_hint()
         nominated, nominators = set(), set()
         best, block, tie = 0, None, False
@@ -782,37 +837,37 @@ class Game:
                 nominated.add(t)
                 agent = self.agents[s]
                 if s == self.human:
-                    self.say(f"{self.name(s)} nominates {self.name(t)}.")
+                    self.say(M("nominates_plain", a=S(s), t=S(t)), speaker=s)
                 else:
                     b = agent.read(self) if s in self.team else self.belief_of(agent)
-                    self.say(f'{self.name(s)} nominates {self.name(t)}: "{agent.explain(self, t, b)}."')
+                    self.say(self.m("nominates", a=S(s), t=S(t), why=agent.explain(self, t, b)), speaker=s)
                 if self._virgin(s, t):
                     return
                 self._defend(t)
                 majority = (len(self.alive) + 1) // 2
                 needed = max(majority, best + 1)
                 on_block = None if tie else block
-                self.say(f"Vote on {self.name(t)}: {needed} votes needed"
-                         + (f" to replace {self.name(on_block)} on the block." if on_block is not None else "."))
+                self.say(M("vote_on_block", t=S(t), needed=needed, b=S(on_block)) if on_block is not None
+                         else M("vote_on", t=S(t), needed=needed))
                 voters = self._vote(t, needed, on_block)
                 self.pub = replace(self.pub, votes=self.pub.votes + (Vote(self.day, s, t, tuple(voters)),))
-                result = f"{len(voters)} vote(s)" + (f" ({', '.join(self.name(v) for v in voters)})" if voters else "")
+                who = L((S(v) for v in voters), paren=True)
                 if len(voters) >= majority and len(voters) > best:
                     best, block, tie = len(voters), t, False
-                    self.say(f"{result}: {self.name(t)} is about to die.")
+                    self.say(M("votes_block", k=len(voters), voters=who, t=S(t)))
                 elif len(voters) >= majority and len(voters) == best:
                     tie = True
-                    self.say(f"{result}: a tie, so nobody is about to die.")
+                    self.say(M("votes_tie", k=len(voters), voters=who))
                 else:
-                    self.say(f"{result}: not enough.")
+                    self.say(M("votes_short", k=len(voters), voters=who))
         if block is not None and not tie:
-            self.say(f"{self.name(block)} is executed.")
+            self.say(M("executed", t=S(block)))
             self.executed = block
             self._kill(block, "execution")
         else:
-            self.say("No execution today.")
+            self.say(M("no_execution"))
             if len(self.alive) == 3 and any(self.roles[s] == "mayor" and self.poisoned != s for s in self.alive):
-                self.say("Three players remain with no execution: the Mayor wins it for good!")
+                self.say(M("mayor_win"))
                 self.winner = "good"
 
     def _defend(self, t):
@@ -829,7 +884,7 @@ class Game:
                 self._publish(*sorted(agent.inbox, key=lambda r: r.night))
                 agent.inbox.clear()
         claim = self.pub.claims[t]
-        self.say(f'{self.name(t)}: "I\'m good' + (f", I\'m the {pretty(claim)}" if claim else "") + '."')
+        self.speech(t, self.m("defend", role=R(claim)) if claim else M("defend_silent"))
 
     def _virgin(self, s, t):
         if t in self.ever_nominated:
@@ -838,7 +893,7 @@ class Game:
         triggered = self.roles[t] == "virgin" and self.poisoned != t and KIND[self.roles[s]] == "townsfolk"
         self.pub = replace(self.pub, first_noms=self.pub.first_noms + (Nomination(self.day, s, t, triggered),))
         if triggered:
-            self.say(f"{self.name(s)} nominates {self.name(t)}: the Virgin's power triggers and {self.name(s)} is executed!")
+            self.say(M("virgin", a=S(s), t=S(t)))
             self.executed = s
             self._kill(s, "execution")
         return triggered
@@ -861,87 +916,98 @@ class Game:
     # --- presentation ------------------------------------------------------------------------
 
     def describe(self, r):
-        return f"N{r.night} {self.name(r.seat)} ({pretty(r.kind)}): {self._info_text(r)}"
+        return M("describe", n=r.night, p=S(r.seat), role=R(r.kind), info=self._info_text(r))
 
     def _info_text(self, r):
-        nm = self.name
         d = r.data
         if r.kind in PING:
-            text = "there are no Outsiders" if d == ZERO else f"one of {nm(d[0])}/{nm(d[1])} is the {pretty(d[2])}"
-        elif r.kind == "chef":
-            text = f"{d[0]} pair(s) of evil neighbours"
-        elif r.kind == "empath":
-            text = f"{d[0]} evil neighbour(s)"
-        elif r.kind == "fortune_teller":
-            text = f"{nm(d[0])} or {nm(d[1])} the Demon? {'YES' if d[2] else 'no'}"
-        elif r.kind == "monk":
-            text = f"protected {nm(d[0])}"
-        else:
-            text = f"{nm(d[0])} {'was' if r.kind == 'undertaker' else 'is'} the {pretty(d[1])}"
-        return text
+            return M("info_zero") if d == ZERO else M("info_ping", a=S(d[0]), b=S(d[1]), role=R(d[2]))
+        if r.kind in ("chef", "empath"):
+            return M("info_" + r.kind, c=d[0])
+        if r.kind == "fortune_teller":
+            return M("info_ft", a=S(d[0]), b=S(d[1]), ans=M("yes" if d[2] else "no"))
+        if r.kind == "monk":
+            return M("info_monk", a=S(d[0]))
+        return M("info_" + r.kind, a=S(d[0]), role=R(d[1]))
 
     def notebook(self):
-        """The whole public record, in order, plus what the Storyteller told the human."""
-        pub, nm = self.pub, self.name
-        lines = ["--- Notebook ---"]
+        """The whole public record, in order, plus what the Storyteller told the human (messages)."""
+        pub = self.pub
+        lines = [M("nb_title")]
         if pub.claims:
-            lines.append("Current claims: " + ", ".join(
-                f"{nm(s)} {pretty(c) if c else '(silent)'}" for s, c in enumerate(pub.claims)))
+            lines.append(M("nb_claims", list=L(M("seat_claim", p=S(s), role=R(c) if c else M("silent"))
+                                               for s, c in enumerate(pub.claims))))
         for n in range(1, self.night + 1):
-            died = [nm(d.seat) for d in pub.deaths if d.tick == night_tick(n)]
-            lines.append(f"Night {n}: " + (", ".join(died) + " died." if died else "no deaths."))
-            lines += ["  " + self.describe(r) for r in pub.reports if r.night == n]
+            died = [S(d.seat) for d in pub.deaths if d.tick == night_tick(n)]
+            lines.append(M("nb_night", n=n, list=L(died, conj=True)) if died else M("nb_night_none", n=n))
+            lines += [M("nb_report", line=self.describe(r)) for r in pub.reports if r.night == n]
             if n > self.day:
                 continue
-            lines.append(f"Day {n}:")
+            lines.append(M("nb_day", n=n))
             said = {}
             for c in pub.claim_log:
                 if c.day == n:
                     old = said.get(c.seat) or next((x.role for x in reversed(pub.claim_log)
                                                     if x.seat == c.seat and x.day < n), None)
-                    lines.append(f"  {nm(c.seat)} claimed {pretty(c.role)}"
-                                 + (f" (changed from {pretty(old)})" if old and old != c.role else ""))
+                    lines.append(M("nb_claimed_changed", p=S(c.seat), role=R(c.role), old=R(old))
+                                 if old and old != c.role else M("nb_claimed", p=S(c.seat), role=R(c.role)))
                     said[c.seat] = c.role
             for sh in pub.shots:
                 if sh.day == n:
-                    lines.append(f"  {nm(sh.shooter)} shot {nm(sh.target)}: " + ("died" if sh.killed else "nothing"))
+                    lines.append(M("nb_shot", p=S(sh.shooter), t=S(sh.target),
+                                   result=M("nb_shot_died" if sh.killed else "nb_shot_nothing")))
             for fn in pub.first_noms:
                 if fn.day == n and fn.triggered:
-                    lines.append(f"  {nm(fn.nominator)} nominated {nm(fn.nominee)}: Virgin triggered, {nm(fn.nominator)} executed")
+                    lines.append(M("nb_virgin", a=S(fn.nominator), t=S(fn.nominee)))
             for v in pub.votes:
                 if v.day == n:
-                    lines.append(f"  {nm(v.nominator)} -> {nm(v.nominee)}: {len(v.voters)} vote(s)"
-                                 + (f" ({', '.join(nm(x) for x in v.voters)})" if v.voters else ""))
+                    lines.append(M("nb_vote", a=S(v.nominator), t=S(v.nominee), k=len(v.voters),
+                                   voters=L((S(x) for x in v.voters), paren=True)))
             ex = self.executed_on(n)
-            lines.append(f"  Executed: {nm(ex)}" if ex is not None else "  No execution.")
+            lines.append(M("nb_exec", p=S(ex)) if ex is not None else M("nb_noexec"))
         dead = sorted(self.dead)
-        lines.append("Dead: " + (", ".join(nm(s) + (" (ghost vote used)" if s in self.ghosts_used else "")
-                                           for s in dead) or "nobody"))
+        lines.append(M("nb_dead", list=L(M("dead_entry_used" if s in self.ghosts_used else "dead_entry", p=S(s))
+                                         for s in dead) if dead else M("nb_nobody")))
         if self.human is not None:
             chats = [w for w in self.whispers if self.human in w.group]
             if chats:
-                lines.append("Your private conversations:")
+                lines.append(M("nb_chats"))
             for w in chats:
-                with_ = ", ".join(nm(x) for x in w.group if x != self.human)
-                said = f"claimed {pretty(w.claim)}" if w.claim else self.describe(w.report)
-                lines.append(f"  Day {w.day} (with {with_}): {nm(w.speaker)} {said}")
+                with_ = L((S(x) for x in w.group if x != self.human), conj=True)
+                lines.append(M("nb_chat_claim", d=w.day, list=with_, p=S(w.speaker), role=R(w.claim)) if w.claim
+                             else M("nb_chat_report", d=w.day, list=with_, line=self.describe(w.report)))
         if self.private:
-            lines.append("Told to you privately:")
-            lines += ["  " + p for p in self.private]
+            lines.append(M("nb_told"))
+            lines += self.private
         return lines
+
+    def history(self, seat):
+        """Everything public about one player, for their player card (messages)."""
+        pub, out = self.pub, []
+        for c in pub.claim_log:
+            if c.seat == seat:
+                out.append(M("nb_claimed", p=S(seat), role=R(c.role)))
+        out += [M("nb_report", line=self.describe(r)) for r in pub.reports if r.seat == seat]
+        for v in pub.votes:
+            if seat in (v.nominator, v.nominee) or seat in v.voters:
+                out.append(M("nb_vote", a=S(v.nominator), t=S(v.nominee), k=len(v.voters),
+                             voters=L((S(x) for x in v.voters), paren=True)))
+        return out
 
     def _reveal(self):
         self.phase = "over"
-        self.say(f"\n*** {(self.winner or 'nobody (day limit)').upper()} WINS after {self.day} day(s) ***")
-        self.say("Grimoire:")
+        team = {"good": "team_good", "evil": "team_evil"}.get(self.winner, "team_none")
+        self.say(M("winner", team=M(team), d=self.day))
+        self.say(M("grimoire"))
         for s, r in enumerate(self.start_roles):
-            extra = f" (thought they were the {pretty(self.drunk_as)})" if r == "drunk" else ""
-            extra += " [red herring]" if s == self.red_herring else ""
-            prof = self.agents[s].profile
-            who = "[you" if s == self.human else f"[{prof.name}"
-            who += ", evil]" if s in self.team else "]"
-            self.say(f"  {self.name(s):5} {pretty(r)}{extra} {who}{' (dead)' if s in self.dead else ''}")
-        self.say("Demon bluffs: " + ", ".join(pretty(b) for b in self.bluffs))
-        self.say("Storyteller notes:")
+            extra = L(([M("drunk_thought", role=R(self.drunk_as))] if r == "drunk" else [])
+                      + ([M("red_herring")] if s == self.red_herring else [])
+                      + ([M("dead")] if s in self.dead else []))
+            who = M("who_you") if s == self.human else M(self.agents[s].profile.name)
+            if s in self.team:
+                who = M("who_evil", who=who)
+            self.say(M("grim_line", p=S(s), role=R(r), extra=extra, who=who))
+        self.say(M("bluffs_end", roles=L(R(b) for b in self.bluffs)))
+        self.say(M("st_notes"))
         for line in self.notes:
-            self.say("  " + line)
+            self.say(line)

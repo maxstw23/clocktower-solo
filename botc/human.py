@@ -8,6 +8,7 @@ import queue
 import random
 
 from .agents import PROFILES, Agent
+from .i18n import L, M, S
 
 
 class GameAborted(Exception):
@@ -28,7 +29,7 @@ class TerminalIO:
                 return default
             if raw.lower() in ("?", "notes") and self.game:
                 for line in self.game.notebook():
-                    self.out(line)
+                    self.out(self.game.text(line))
                 continue
             if not raw:
                 return default
@@ -46,9 +47,13 @@ class TerminalIO:
             raise ValueError(f"Choose one of: {', '.join(g.name(s) for s in allowed)}.")
         return matches[0]
 
+    def _t(self, m):
+        return self.game.text(m)
+
     def choose(self, prompt, labels, default=0):
+        prompt = self._t(prompt)
         for i, label in enumerate(labels, 1):
-            self.out(f"  {i}. {label}")
+            self.out(f"  {i}. {self._t(label)}")
 
         def parse(raw):
             if not raw.isdigit() or not 1 <= int(raw) <= len(labels):
@@ -57,11 +62,14 @@ class TerminalIO:
         return self._ask(f"{prompt} [{default + 1}]", parse, default)
 
     def seat(self, prompt, seats, default=None):
+        prompt = self._t(prompt)
         names = ", ".join(self.game.name(s) for s in seats)
         hint = "Enter to pass" if default is None else f"Enter for {self.game.name(default)}"
         return self._ask(f"{prompt} ({names}; {hint})", lambda r: self._seat_of(r, seats), default)
 
     def seats(self, prompt, seats, k, default):
+        prompt = self._t(prompt)
+
         def parse(raw):
             chosen = [self._seat_of(p, seats) for p in raw.replace(",", " ").split()]
             if len(chosen) != k or len(set(chosen)) != k:
@@ -71,6 +79,8 @@ class TerminalIO:
         return self._ask(f"{prompt} ({names})", parse, list(default))
 
     def yes_no(self, prompt, default=False):
+        prompt = self._t(prompt)
+
         def parse(raw):
             if raw.lower() not in ("y", "yes", "n", "no"):
                 raise ValueError("Answer y or n.")
@@ -153,27 +163,25 @@ class HumanAgent(Agent):
     # --- night -------------------------------------------------------------------------------
 
     def ft_pick(self, game):
-        a, b = self.io.seats("Fortune Teller: choose two players to ask about.", self._others(False), 2,
-                             self._others(False)[:2])
+        a, b = self.io.seats(M("q_ft"), self._others(False), 2, self._others(False)[:2])
         return min(a, b), max(a, b)
 
     def monk_pick(self, game):
-        return self.io.seat("Monk: whom do you protect tonight?", self._others(), self._others()[0])
+        return self.io.seat(M("q_monk"), self._others(), self._others()[0])
 
     def rk_pick(self, game):
-        return self.io.seat("Ravenkeeper: you died tonight. Whose character do you learn?",
-                            self._others(), self._others()[0])
+        return self.io.seat(M("q_rk"), self._others(), self._others()[0])
 
     def butler_pick(self, game):
-        return self.io.seat("Butler: choose your master (you may only vote when they do).",
-                            self._others(), self._others()[0])
+        return self.io.seat(M("q_butler"), self._others(), self._others()[0])
 
     def poison_pick(self, game):
-        return self.io.seat("Poisoner: whom do you poison tonight?", self._others(), self._others()[0])
+        targets = [s for s in self._others() if s not in self.team] or self._others()
+        return self.io.seat(M("q_poison"), self._others(), targets[0])
 
     def kill_pick(self, game):
         targets = [s for s in self._others() if s not in self.team] or self._others()
-        return self.io.seat("Imp: whom do you kill tonight?", self._others(), targets[0])
+        return self.io.seat(M("q_kill"), self._others(), targets[0])
 
     # --- day ---------------------------------------------------------------------------------
 
@@ -181,19 +189,18 @@ class HumanAgent(Agent):
         return None  # the human speaks in their own turn
 
     def invite(self, game, free):
-        n = self.io.choose("Private conversations: do you want to take someone aside?",
-                           ["No", "Talk with one player", "Talk with two players"], default=0)
+        n = self.io.choose(M("q_aside"), [M("aside_no"), M("aside_one"), M("aside_two")], default=0)
         if n == 0:
             return []
         if n == 1 or len(free) < 2:
-            s = self.io.seat("Whom do you invite?", free)
+            s = self.io.seat(M("q_invite"), free)
             return [] if s is None else [s]
-        return list(self.io.seats("Whom do you invite?", free, 2, free[:2]))
+        return list(self.io.seats(M("q_invite"), free, 2, free[:2]))
 
     def accept(self, game, inviter, invited):
-        others = [game.name(x) for x in invited if x != self.seat]
-        extra = f" (together with {', '.join(others)})" if others else ""
-        return self.io.yes_no(f"{game.name(inviter)} wants to talk with you privately{extra}. Join them?")
+        others = [S(x) for x in invited if x != self.seat]
+        extra = M("together", list=L(others, conj=True)) if others else ""
+        return self.io.yes_no(M("q_accept", p=S(inviter), extra=extra))
 
     def nominate(self, game, nominated):
         if self.seat in game.dead:
@@ -201,9 +208,8 @@ class HumanAgent(Agent):
         allowed = [s for s in self._others() if s not in nominated]
         if not allowed:
             return None
-        return self.io.seat("Do you want to nominate someone? Pick a player, or pass.", allowed)
+        return self.io.seat(M("q_nominate"), allowed)
 
     def vote(self, game, nominee, yes, needed, block, ghost):
-        status = f"{yes} so far, {needed} needed"
-        kind = "your ghost vote (you only get one)" if ghost else "your vote"
-        return self.io.yes_no(f"Raise your hand? Vote to execute {game.name(nominee)} with {kind}. ({status})")
+        kind = M("your_ghost_vote") if ghost else M("your_vote")
+        return self.io.yes_no(M("q_vote", t=S(nominee), kind=kind, yes=yes, needed=needed))

@@ -21,6 +21,7 @@ deterministic given a hidden seed, with no LLM in the game state.
 | Engine | `engine.py` | Grimoire (truth), night order, day procedure, win conditions |
 | Human seat | `human.py` | Same moves as an AI player; questions go to the terminal or the browser |
 | Browser UI | `web.py`, `static/index.html` | Local server (standard library) and a one-page table view |
+| Languages | `i18n.py` | Every message, character name and ability in English and Chinese |
 
 ## Key abstractions
 
@@ -42,6 +43,17 @@ publicly. Evil players accept everything and invite valuable-looking good player
 team overheard, and kill the most dangerous trusted character, so confiding in the wrong person
 gets you killed. The human can invite one or two players (who accept by trust) and accept or
 decline invitations.
+
+**Messages, not sentences.** The engine records each line as a message key plus arguments
+(players, characters, nested reasons); `i18n.render` turns it into English or Chinese when it is
+shown, so the page can switch language mid-game. Common lines have several phrasings, picked by
+seed. In the browser the game paces itself (a pause before each line, adjustable speed) so players
+speak one at a time; accused players answer back once a day.
+
+**Evil coordination.** Anyone may claim an evil character, publicly or privately (as a good player
+it reads as a costly bluff). In a private chat among the evil team, AI teammates state their real
+character and plan ("I'll poison X tonight"); an evil human can suggest tonight's kill or poison
+target and the AI follows it.
 
 **Worlds and excuses.** A world is a starting role assignment. Records that contradict a sober
 good player need an *excuse*: a poisoning (at most one per night, Poisoner alive), a Spy/Recluse

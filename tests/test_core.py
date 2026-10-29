@@ -72,6 +72,96 @@ def test_double_claim_allows_a_good_bluffer():
     assert any(w.bluffs == 1 and w.roles[6] == "?townsfolk" for w in worlds)
 
 
+def _keys(m, out):
+    from botc.i18n import L, M
+    if isinstance(m, M):
+        out.add(m.key)
+        for a in m.args.values():
+            _keys(a, out)
+    elif isinstance(m, L):
+        for x in m.items:
+            _keys(x, out)
+    return out
+
+
+def test_every_message_exists_in_both_languages():
+    from botc.i18n import TEXT
+    keys = set()
+
+    class Recorder(TerminalIO):
+        def _ask(self, prompt, parse, default):
+            return default
+        def choose(self, prompt, labels, default=0):
+            for m in [prompt, *labels]:
+                _keys(m, keys)
+            return default
+        def seat(self, prompt, seats, default=None):
+            _keys(prompt, keys)
+            return default
+        def seats(self, prompt, seats, k, default):
+            _keys(prompt, keys)
+            return list(default)
+        def yes_no(self, prompt, default=False):
+            _keys(prompt, keys)
+            return default
+
+    for seed in range(6):
+        for seat in (0, 3):
+            g = Game(8, seed, out=None, human=seat, hints=True, io=Recorder(out=lambda m: None))
+            g.run()
+            for e in g.log:
+                _keys(e["m"], keys)
+            for m in g.notebook():
+                _keys(m, keys)
+    missing = {lang: sorted(k for k in keys if k not in TEXT[lang]) for lang in TEXT}
+    assert not any(missing.values()), missing
+
+
+def test_evil_human_can_steer_the_kill():
+    from botc.engine import Game as G
+    from botc.public import night_tick
+    for seed in range(40):
+        probe = G(8, seed, out=None)
+        minion = next((s for s in probe.team if s != probe.demon), None)
+        if minion is None:
+            continue
+
+        class Plotter(TerminalIO):
+            target = None
+            def choose(self, prompt, labels, default=0):
+                if prompt.key == "q_aside":
+                    return 1
+                if prompt.key == "q_chat":
+                    keys = [l.key for l in labels]
+                    if "c_kill" in keys and self.target is None:
+                        return keys.index("c_kill")
+                    return keys.index("c_done")
+                return default
+            def seat(self, prompt, seats, default=None):
+                if prompt.key == "q_invite":
+                    return probe.demon
+                if prompt.key == "q_kill_suggest":
+                    Plotter.target = seats[-1]
+                    return seats[-1]
+                return default
+            def seats(self, prompt, seats, k, default):
+                return list(default)
+            def yes_no(self, prompt, default=False):
+                return default
+
+        io = Plotter(out=lambda m: None)
+        g = G(8, seed, out=None, human=minion, io=io)
+        g.run()
+        if Plotter.target is None or g.day < 1:
+            continue
+        night2 = [d.seat for d in g.pub.deaths if d.cause == "night" and d.tick == night_tick(2)]
+        protected = any(Plotter.target == r.data[0] for r in g.pub.reports if r.kind == "monk" and r.night == 2)
+        if night2 or not protected:
+            assert night2 == [Plotter.target] or g.roles[Plotter.target] == "soldier" or g.winner
+        return
+    raise AssertionError("no seed with an evil minion seat")
+
+
 def test_empath_zero_clears_neighbours():
     # 7 players: 5 townsfolk, 0 outsiders, 1 minion, 1 imp
     claims = ("empath", "chef", "monk", "slayer", "soldier", "virgin", "mayor")

@@ -13,7 +13,8 @@ from dataclasses import dataclass
 
 from itertools import combinations
 
-from .roles import KIND, is_evil, pretty
+from .i18n import M, R, S
+from .roles import KIND, is_evil
 from .worlds import Belief, tally
 
 
@@ -114,37 +115,40 @@ class Agent:
         return base - self.profile.urgency * (game.day - 1)
 
     def explain(self, game, target, b):
-        """A one-line reason for suspecting `target`, from the record as this player reads it."""
-        pub, nm = game.record_for(self.seat), game.name
+        """A reason for suspecting `target` (a message), from the record as this player reads it."""
+        pub = game.record_for(self.seat)
         claim = pub.claims[target] if pub.claims else None
         if claim is None:
-            return "they still haven't said what they are"
+            return M("r_silent")
+        if is_evil(claim):
+            return M("r_evilclaim", role=R(claim))
         twins = [s for s, c in enumerate(pub.claims) if s != target and c == claim]
         if twins:
-            return f"{nm(twins[0])} also claims to be the {pretty(claim)}"
+            return M("r_twin", x=S(twins[0]), role=R(claim))
         if pub.claim_changes(target):
             first = next(c.role for c in pub.claim_log if c.seat == target)
-            return f"they claimed {pretty(first)} before switching to {pretty(claim)}"
+            return M("r_changed", old=R(first), new=R(claim))
         for v in reversed(pub.votes):
             if game.executed_on(v.day) == v.nominee and b.evil_pct(v.nominee) < 30 \
                     and target in (v.nominator, *v.voters):
-                return f"they pushed {nm(v.nominee)}'s execution, and {nm(v.nominee)} looks good now"
+                return M("r_pushed", x=S(v.nominee))
         for r in reversed(pub.reports):
             if r.seat == target or b.evil_pct(r.seat) >= 30:
                 continue
+            mine = r.seat == self.seat
             if r.kind == "fortune_teller" and r.data[2] and target in r.data[:2]:
-                return f"{nm(r.seat)}'s Fortune Teller got a YES on them"
+                return M("r_ft_mine") if mine else M("r_ft", x=S(r.seat))
             if r.kind == "investigator" and r.data[0] is not None and target in r.data[:2]:
-                return f"{nm(r.seat)}'s Investigator ping says they might be the {pretty(r.data[2])}"
+                return M("r_inv_mine", role=R(r.data[2])) if mine else M("r_inv", x=S(r.seat), role=R(r.data[2]))
         # Whose info, if true, most implicates them?
         best = max(((b.evil_if_good(target, r), r) for r in {x.seat for x in pub.reports}
                     if r != target and b.evil_pct(r) < 40), default=None)
         if best and best[0] >= 0.6:
-            whose = "my" if best[1] == self.seat else f"{nm(best[1])}'s"
-            return f"if {whose} info is right, they're evil in {int(100 * best[0])}% of the setups that fit"
+            whose = M("my") if best[1] == self.seat else M("whose", x=S(best[1]))
+            return M("r_ifinfo", whose=whose, pct=int(100 * best[0]))
         if b.demon_pct(target) >= 40:
-            return f"they're the Demon in {b.demon_pct(target)}% of the setups I can make fit"
-        return "nothing clears them, and I can vouch for most others"
+            return M("r_demon_pct", pct=b.demon_pct(target))
+        return M("r_nothing")
 
 
 class GoodAgent(Agent):
@@ -288,7 +292,10 @@ class EvilAgent(Agent):
         return [s for s in game.alive if s not in self.team]
 
     def invite(self, game, free):
-        """Fish for secrets: talk to the good player whose claim they'd most like to know about."""
+        """Plan with a human teammate if there is one; otherwise fish for secrets from the good
+        player whose claim they'd most like to know about."""
+        if game.human in self.team and game.human in free and game.day <= 2:
+            return [game.human]
         targets = [s for s in free if s not in self.team]
         if not targets or not game.pub.claims:
             return []
@@ -328,10 +335,16 @@ class EvilAgent(Agent):
         return self.read(game).suspicion(nominee) >= t
 
     def poison_pick(self, game):
+        wish = game.suggest.get("poison")
+        if wish in game.alive and wish not in self.team:
+            return wish  # a teammate asked for this
         b = self.read(game)
         return self.rank(self._targets(game), lambda s: (-self.value(game, s), b.evil_pct(s)))[0]
 
     def kill_pick(self, game):
+        wish = game.suggest.get("kill")
+        if wish in game.alive and wish not in self.team:
+            return wish
         b = self.read(game)
         cands = [s for s in self._targets(game) if s not in self.survived] or self._targets(game)
         safe = [s for s in cands if game.pub.claims[s] not in ("soldier", "ravenkeeper")] or cands
