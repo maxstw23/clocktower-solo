@@ -26,10 +26,13 @@ deterministic given a hidden seed, with no LLM in the game state.
 
 ## Key abstractions
 
-**The day.** Dawn; on day 1 an introduction round (everyone states a character or stays silent);
-then a discussion round where each player speaks once (claims or changes their claim, shares what
-their ability showed them, says whom they suspect and why); then nominations, each with the
-nominator's reason, the nominee's defence, and a vote. Reasons are generated from the solver:
+**The day.** Dawn; private conversations; then a public round where each player speaks once
+(claims or changes their claim, shares what their ability showed them, and from day 2 says whom
+they suspect and why); on day 1 a second round for suspicions once everyone has claimed; then
+nominations, each with the nominator's reason, the nominee's defence, and a vote. In the browser,
+phase changes and big moments (night, dawn and deaths, night info, executions, Slayer, Virgin, the
+result) are shown as cards (`Game.beat`); each line stays up for a reading time based on its
+length, and a step-by-step speed waits for a tap after every line. Reasons are generated from the solver:
 a double claim, a changed claim, a pushed execution of a now-good-looking player, a direct ping or
 YES, or "if X's info is right, they're evil in N% of the setups that fit".
 

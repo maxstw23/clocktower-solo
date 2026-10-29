@@ -79,6 +79,12 @@ class TerminalIO:
         names = ", ".join(self.game.name(s) for s in seats)
         return self._ask(f"{prompt} ({names})", parse, list(default))
 
+    def ack(self, title, body=None):
+        self.out(f"== {self._t(title)} ==" + (f" {self._t(body)}" if body else ""))
+
+    def next(self):
+        return None
+
     def yes_no(self, prompt, default=False):
         prompt = self._t(prompt)
 
@@ -132,6 +138,8 @@ class WebIO:
             return f"Choose {p['k']} different players."
         if kind == "yesno" and not isinstance(value, bool):
             return "Answer yes or no."
+        if kind in ("ack", "next"):
+            value = True
         fut = self._future
         self._loop.call_soon_threadsafe(lambda: fut.done() or fut.set_result(value))
         return None
@@ -147,6 +155,12 @@ class WebIO:
 
     def yes_no(self, prompt, default=False):
         return self._ask({"type": "yesno", "text": prompt, "default": default})
+
+    def ack(self, title, body=None):
+        return self._ask({"type": "ack", "title": title, "text": body})
+
+    def next(self):
+        return self._ask({"type": "next", "text": None})
 
 
 class ChoiceIO:
@@ -170,6 +184,14 @@ class ChoiceIO:
 
     def yes_no(self, prompt, default=False):
         return self._call("yes_no", prompt, default)
+
+    async def ack(self, title, body=None):
+        if hasattr(self.raw, "ack"):
+            await self._call("ack", title, body)
+
+    async def next(self):
+        if hasattr(self.raw, "next"):
+            await self._call("next")
 
 
 class HumanAgent(Agent):

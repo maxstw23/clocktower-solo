@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 from .engine import Game
 from .human import GameAborted, WebIO
 from .i18n import LANGS
-from .ui import SPEEDS, WAIT, roles_payload, snapshot
+from .ui import SPEEDS, pacer, roles_payload, snapshot
 
 PAGE = Path(__file__).with_name("static") / "index.html"
 
@@ -29,9 +29,6 @@ class Session:
         self.speed = "normal"
         self.lock = threading.Lock()
 
-    def pace(self, kind):
-        return WAIT[kind] * SPEEDS[self.speed]
-
     def start(self, name, players, seed, seat, hints, lang):
         with self.lock:
             if self.io:
@@ -41,7 +38,8 @@ class Session:
                 seat = random.Random(f"seat-{seed}").randrange(players)
             io = WebIO()
             game = Game(players, seed, out=None, human=seat, io=io, hints=hints, name=name or None,
-                        lang=lang, pace=self.pace)
+                        lang=lang, pace=pacer(lambda: self.speed, lang),
+                        step=lambda: self.speed == "step")
             self.game, self.io, self.error = game, io, None
 
             def run():

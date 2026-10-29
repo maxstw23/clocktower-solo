@@ -177,11 +177,9 @@ class GoodAgent(Agent):
 
     def invite(self, game, free):
         """Whom to talk to privately: the players they trust most (two if they are hiding something)."""
-        if not game.pub.claims:
-            return []
         trusted = [s for s in self.rank(free, lambda s: self.suspicion(game, s))
                    if self.suspicion(game, s) < self.profile.confide_at]
-        hiding = game.pub.claims[self.seat] != self.role
+        hiding = bool(game.pub.claims) and game.pub.claims[self.seat] != self.role
         return trusted[:2 if hiding else 1]
 
     def accept(self, game, inviter, invited):
@@ -255,7 +253,7 @@ class GoodAgent(Agent):
         if block is not None and sus <= self.suspicion(game, block):
             return False
         t = self.threshold(self.profile.vote_at, game) - self.profile.bandwagon * yes
-        if game.pub.claims[nominee] == "saint":
+        if game.pub.claims and game.pub.claims[nominee] == "saint":
             t += self.profile.saint_caution
         if ghost:
             t = max(t, self.profile.ghost_vote_at)
@@ -297,7 +295,7 @@ class EvilAgent(Agent):
         if game.human in self.team and game.human in free and game.day <= 2:
             return [game.human]
         targets = [s for s in free if s not in self.team]
-        if not targets or not game.pub.claims:
+        if not targets:
             return []
         return self.rank(targets, lambda s: -self.value(game, s))[:1]
 
@@ -347,6 +345,7 @@ class EvilAgent(Agent):
             return wish
         b = self.read(game)
         cands = [s for s in self._targets(game) if s not in self.survived] or self._targets(game)
-        safe = [s for s in cands if game.pub.claims[s] not in ("soldier", "ravenkeeper")] or cands
+        claims = game.pub.claims or (None,) * game.n
+        safe = [s for s in cands if claims[s] not in ("soldier", "ravenkeeper")] or cands
         # Kill whoever is most dangerous: a valuable character the town trusts.
         return self.rank(safe, lambda s: b.evil_pct(s) - 10 * self.value(game, s))[0]

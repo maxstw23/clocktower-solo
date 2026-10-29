@@ -31,7 +31,7 @@ BLUFF_ORDER = ("washerwoman", "librarian", "investigator", "chef", "undertaker",
 
 class Game:
     def __init__(self, players=10, seed=0, mix=("novice", "regular", "veteran"), out=print, check=False,
-                 human=None, io=None, hints=False, name=None, lang="en", pace=None):
+                 human=None, io=None, hints=False, name=None, lang="en", pace=None, step=None):
         if players not in SETUP:
             raise ValueError(f"Trouble Brewing supports 5-15 players, not {players}")
         self.n = players
@@ -46,7 +46,8 @@ class Game:
             self.names = [n for n in pool if n.lower() != name.lower()][:players]
             self.names[human] = name
         self.lang = lang       # language for `out` (the web page renders in the reader's language)
-        self.pace = pace       # pace(kind) -> seconds to wait before a line appears (web play)
+        self.pace = pace       # pace(kind, chars) -> seconds a line stays before the next (web play)
+        self.step = step       # step() -> True: wait for the human to tap after each line
         self.speaking = None   # seat currently speaking, while paced
         self.log = []          # every line said, in order: dicts with m, private, chat, speaker
         self.suggest = {}      # evil human's suggestions to AI teammates: "kill"/"poison" -> seat
@@ -159,15 +160,24 @@ class Game:
 
     async def say(self, m, private=False, chat=False, speaker=None):
         """`private`: only the human sees it. `chat`: said in a private group the human is in."""
-        if self.pace:
-            kind = "speech" if speaker is not None else "private" if private else "event"
-            self.speaking = speaker
-            await asyncio.sleep(self.pace(kind))
-            self.speaking = None
+        kind = "speech" if speaker is not None else "private" if private else "event"
+        if self.pace and speaker is not None:
+            self.speaking = speaker  # a moment of "speaking…" before the words appear
+            await asyncio.sleep(self.pace("lead", 0))
         self.log.append({"m": m, "private": private, "chat": chat, "speaker": speaker})
         if self.out:
             text = self.text(m)
             self.out(f"  (in private) {text}" if chat else f"  (private) {text}" if private else text)
+        if self.human is not None and self.step and self.step() and speaker is not None and speaker != self.human:
+            await self.agents[self.human].io.next()
+        elif self.pace:
+            await asyncio.sleep(self.pace(kind, len(self.text(m))))  # time to read it
+        self.speaking = None
+
+    async def beat(self, title, body=None):
+        """A moment the human must not miss (a phase change, a death): show it as a card."""
+        if self.human is not None:
+            await self.agents[self.human].io.ack(title, body)
 
     async def speech(self, s, msg, private=False, chat=False):
         await self.say(M("speech", p=S(s), text=msg), private=private, chat=chat, speaker=s)
@@ -192,9 +202,9 @@ class Game:
         """What this player has heard: the public record plus their private conversations."""
         view = self.known
         heard = [w for w in self.whispers if seat in w.group]
-        if not heard or not view.claims:
+        if not heard:
             return view
-        claims = list(view.claims)
+        claims = list(view.claims or (None,) * self.n)
         for w in heard:
             if w.claim and w.seq > self.claim_seq.get(w.speaker, -1):
                 claims[w.speaker] = w.claim
@@ -305,6 +315,7 @@ class Game:
         self.poisoned = None
         self.dusk = self.pub
         await self.say(M("night_falls", n=self.night))
+        await self.beat(M("night_title", n=self.night), M("night_body"))
 
         def acting(role):
             return [s for s in self.alive if self.perceived[s] == role]
@@ -359,6 +370,7 @@ class Game:
         self.agents[s].inbox.append(report)
         if s == self.human:
             await self.tell(M("learn", info=self._info_text(report)))
+            await self.beat(M("learn_title"), M("learn", info=self._info_text(report)))
         if malf:
             why = M("why_drunk") if self.roles[s] == "drunk" else M("why_poisoned")
             self.note(M("note_shown", p=S(s), why=why, info=self.describe(report)))
@@ -435,22 +447,27 @@ class Game:
         self.phase = "dawn"
         await self.say(M("day_header", d=self.day))
         died = [S(d.seat) for d in self.pub.deaths if d.tick == night_tick(self.night)]
-        await self.say(M("dawn_deaths", list=L(died, conj=True)) if died else M("dawn_none"))
+        dawn = M("dawn_deaths", list=L(died, conj=True)) if died else M("dawn_none")
+        await self.say(dawn)
+        await self.beat(M("day_header", d=self.day), dawn)
         await self._show_hint()
         k = self.day % self.n
         order = [(k + i) % self.n for i in range(self.n)]
-        if self.day == 1:
-            self.phase = "introductions"
-            await self.say(M("phase_intro"))
-            for s in order:
-                await self._introduce(s)
         await self._private_chats(order)
         self.phase = "discussion"
         await self.say(M("phase_discussion"))
+        await self.beat(M("phase_discussion_title"), M("phase_discussion_body"))
         for s in order:
-            await self._speak(s)
+            await self._speak(s, accuse=self.day > 1)
             if self.winner:
                 return
+        if self.day == 1:
+            # Once everyone has said who they are, a second round for suspicions.
+            await self.say(M("phase_react"))
+            for s in order:
+                await self._react(s)
+                if self.winner:
+                    return
         self._check()
         await self._show_reads()
         self.phase = "nominations"
@@ -504,6 +521,7 @@ class Game:
         """Players step aside in small groups. Each player is in at most one group a day."""
         self.phase = "private chats"
         await self.say(M("phase_chats"))
+        await self.beat(M("phase_chats_title"), M("phase_chats_body"))
         busy = set()
         for s in order:
             if s in busy:
@@ -550,13 +568,22 @@ class Game:
             mates = [x for x in group if x != s and x in self.team]
             if s in self.team and mates:
                 # Among the evil team, a private chat is for making plans.
-                await self._whisper(s, group, text=M("e_role", role=R(self.roles[s]), claim=R(self.pub.claims[s])))
+                public = self.pub.claims[s] if self.pub.claims else None
+                await self._whisper(s, group, text=M("e_role", role=R(self.roles[s]), claim=R(public or self.planned_claims[s])))
                 if self.roles[s] == "poisoner":
                     await self._whisper(s, group, text=M("e_poison", t=S(agent.poison_pick(self))))
                 elif s == self.demon and self.day >= 1:
                     await self._whisper(s, group, text=M("e_kill", t=S(agent.kill_pick(self))))
                 continue
-            if s not in self.team and self.pub.claims[s] != agent.role:
+            public = self.pub.claims[s] if self.pub.claims else None
+            if s in self.team and public is None:
+                await self._whisper(s, group, claim=self.planned_claims[s])
+            elif s not in self.team and public is None and not agent.cover:
+                # Before anyone has spoken in public: compare notes with your character and info.
+                await self._whisper(s, group, claim=agent.role)
+                for r in sorted(agent.inbox, key=lambda r: r.night):
+                    await self._whisper(s, group, report=r)
+            elif s not in self.team and public is not None and public != agent.role:
                 # A hidden player confides their real character and info to people they trust.
                 await self._whisper(s, group, claim=agent.role)
                 for r in sorted(agent.inbox, key=lambda r: r.night):
@@ -603,16 +630,15 @@ class Game:
                 if t is not None:
                     await self._whisper(h, group, text=M("suspect_plain", t=S(t)))
 
-    async def _introduce(self, s):
+    async def _react(self, s):
         if s == self.human:
-            agent = self.agents[s]
-            if await agent.io.choose(M("q_intro"), [M("i_claim"), M("i_silent")], default=0) == 0:
-                await self._human_claim()
-            return
-        agent = self.agents[s]
-        await self._claim(s, self.planned_claims[s] if s in self.team else agent.claim_now(self))
+            return await self._human_turn(react=True)
+        said = self.agents[s].statement(self)
+        if said:
+            await self.speech(s, self.m("suspect", t=S(said[0]), why=said[1]))
+            await self._reply(said[0])
 
-    async def _speak(self, s):
+    async def _speak(self, s, accuse=True):
         if s == self.human:
             return await self._human_turn()
         agent = self.agents[s]
@@ -628,6 +654,8 @@ class Game:
             role = agent.claim_now(self)
             if role:
                 await self._claim(s, role)
+            elif not self.pub.claims or self.pub.claims[s] is None:
+                await self._claim(s, agent.cover or agent.role)
             if self.pub.claims[s] == agent.role and agent.inbox:
                 await self._publish(*sorted(agent.inbox, key=lambda r: r.night))
                 agent.inbox.clear()
@@ -637,7 +665,7 @@ class Game:
                     await self._shoot(s, t)
                     if self.winner:
                         return
-        said = agent.statement(self)
+        said = agent.statement(self) if accuse else None
         if said:
             t, why = said
             await self.speech(s, self.m("suspect", t=S(t), why=why))
@@ -654,7 +682,9 @@ class Game:
     async def _shoot(self, s, t):
         self.agents[s].slayer_used = True
         hit = self.roles[s] == "slayer" and self.poisoned != s and t == self.demon
-        await self.say(M("shoot", p=S(s), t=S(t), result=M("shot_dies", t=S(t)) if hit else M("shot_nothing")), speaker=s)
+        shot = M("shoot", p=S(s), t=S(t), result=M("shot_dies", t=S(t)) if hit else M("shot_nothing"))
+        await self.say(shot, speaker=s)
+        await self.beat(M("slayer_title"), shot)
         self.pub = replace(self.pub, shots=self.pub.shots + (Shot(self.day, s, t, hit),))
         if hit:
             await self._kill(t, "slayer")
@@ -680,21 +710,24 @@ class Game:
 
     # --- the human's turn ----------------------------------------------------------------------
 
-    async def _human_turn(self, defending=False):
+    async def _human_turn(self, defending=False, react=False):
         h = self.human
         agent, io = self.agents[h], self.agents[h].io
         while True:
             claim = self.pub.claims[h] if self.pub.claims else None
             acts = [("claim", M("a_claim") if claim is None else M("a_change", role=R(claim)))]
-            if claim is not None and self._info_nights(h, claim):
+            if claim is not None and self._info_nights(h, claim) and not react:
                 acts.append(("share", M("a_share", role=R(claim))))
             if h not in self.dead and not defending:
                 acts.append(("accuse", M("a_accuse")))
                 if not agent.slayer_used and "slayer" in (claim, self.perceived[h]):
                     acts.append(("shoot", M("a_shoot")))
             acts.append(("done", M("a_done")))
-            prompt = M("q_defend") if defending else M("q_turn")
-            act = acts[await io.choose(prompt, [a[1] for a in acts], default=len(acts) - 1)][0]
+            prompt = M("q_defend") if defending else M("q_react") if react else M("q_turn")
+            keys = [a[0] for a in acts]
+            default = (keys.index("claim") if claim is None and not react else keys.index("share") if "share" in keys
+                       else len(acts) - 1)
+            act = acts[await io.choose(prompt, [a[1] for a in acts], default=default)][0]
             if act == "done":
                 return
             if act == "claim":
@@ -833,6 +866,7 @@ class Game:
 
     async def _nominations(self):
         await self.say(M("phase_noms"))
+        await self.beat(M("phase_noms_title"), M("phase_noms_body"))
         await self._show_hint()
         nominated, nominators = set(), set()
         best, block, tie = 0, None, False
@@ -877,10 +911,12 @@ class Game:
                     await self.say(M("votes_short", k=len(voters), voters=who))
         if block is not None and not tie:
             await self.say(M("executed", t=S(block)))
+            await self.beat(M("result_title"), M("executed", t=S(block)))
             self.executed = block
             await self._kill(block, "execution")
         else:
             await self.say(M("no_execution"))
+            await self.beat(M("result_title"), M("no_execution"))
             if len(self.alive) == 3 and any(self.roles[s] == "mayor" and self.poisoned != s for s in self.alive):
                 await self.say(M("mayor_win"))
                 self.winner = "good"
@@ -909,6 +945,7 @@ class Game:
         self.pub = replace(self.pub, first_noms=self.pub.first_noms + (Nomination(self.day, s, t, triggered),))
         if triggered:
             await self.say(M("virgin", a=S(s), t=S(t)))
+            await self.beat(M("virgin_title"), M("virgin", a=S(s), t=S(t)))
             self.executed = s
             await self._kill(s, "execution")
         return triggered
@@ -1013,6 +1050,7 @@ class Game:
         self.phase = "over"
         team = {"good": "team_good", "evil": "team_evil"}.get(self.winner, "team_none")
         await self.say(M("winner", team=M(team), d=self.day))
+        await self.beat(M("over_title"), M("winner", team=M(team), d=self.day))
         await self.say(M("grimoire"))
         for s, r in enumerate(self.start_roles):
             extra = L(([M("drunk_thought", role=R(self.drunk_as))] if r == "drunk" else [])
