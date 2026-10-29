@@ -14,14 +14,14 @@ from botc.worlds import Solver  # noqa: E402
 def test_truth_never_eliminated():
     for players in (7, 8, 10):
         for seed in range(10):
-            Game(players, seed, out=None, check=True).run()
+            Game(players, seed, out=None, check=True).play()
 
 
 def test_same_seed_same_game():
     logs = []
     for _ in range(2):
         lines = []
-        Game(8, 5, out=lines.append).run()
+        Game(8, 5, out=lines.append).play()
         logs.append(lines)
     assert logs[0] == logs[1]
 
@@ -42,7 +42,7 @@ def test_human_seat_with_default_answers():
         for seat in range(8):
             g = Game(8, seed, out=None, check=True, human=seat, hints=True,
                      io=TerminalIO(inp=no_input, out=lambda msg: None))
-            assert g.run() in ("good", "evil", None)
+            assert g.play() in ("good", "evil", None)
 
 
 def test_changing_your_claim_costs_trust():
@@ -108,7 +108,7 @@ def test_every_message_exists_in_both_languages():
     for seed in range(6):
         for seat in (0, 3):
             g = Game(8, seed, out=None, human=seat, hints=True, io=Recorder(out=lambda m: None))
-            g.run()
+            g.play()
             for e in g.log:
                 _keys(e["m"], keys)
             for m in g.notebook():
@@ -151,7 +151,7 @@ def test_evil_human_can_steer_the_kill():
 
         io = Plotter(out=lambda m: None)
         g = G(8, seed, out=None, human=minion, io=io)
-        g.run()
+        g.play()
         if Plotter.target is None or g.day < 1:
             continue
         night2 = [d.seat for d in g.pub.deaths if d.cause == "night" and d.tick == night_tick(2)]

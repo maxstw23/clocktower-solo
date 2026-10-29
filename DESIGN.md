@@ -5,6 +5,7 @@ deterministic given a hidden seed, with no LLM in the game state.
 
     python play.py                    # play one seat in your browser (http://127.0.0.1:8765)
     python play.py --terminal         # or in the terminal
+    python build_web.py               # standalone build in dist/: the game runs in the browser (phones too)
     python sim.py --seed 3            # one narrated all-AI game
     python sim.py --games 30 --players 8 --check
     python tests/test_core.py
@@ -43,6 +44,13 @@ publicly. Evil players accept everything and invite valuable-looking good player
 team overheard, and kill the most dangerous trusted character, so confiding in the wrong person
 gets you killed. The human can invite one or two players (who accept by trust) and accept or
 decline invitations.
+
+**Standalone (phones).** `build_web.py` writes a static site where the same Python engine runs in
+the browser with Pyodide, in a Web Worker (`web/worker.js`, `botc/browser.py`). The engine is
+async: a question to the human and the pause before each line are awaits, so the worker keeps
+answering the page while a game is waiting. The page talks to the local server or the worker
+through the same small API. `.github/workflows/pages.yml` publishes it with GitHub Pages; the
+layout adapts to phone screens (compact table, question pinned to the bottom).
 
 **Messages, not sentences.** The engine records each line as a message key plus arguments
 (players, characters, nested reasons); `i18n.render` turns it into English or Chinese when it is

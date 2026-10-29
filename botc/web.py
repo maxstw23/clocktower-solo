@@ -2,9 +2,10 @@
 
 The game runs in a background thread; whenever it needs the human it waits on WebIO, which the
 page answers through POST /api/answer. The page polls GET /api/state for the log, the table and
-the open question, rendered in the language it asks for. The game paces itself (a short wait
-before each line) so players speak one at a time.
+the open question, rendered in the language it asks for (see ui.py). The game paces itself (a
+short wait before each line) so players speak one at a time.
 """
+import asyncio
 import json
 import random
 import threading
@@ -15,12 +16,10 @@ from urllib.parse import parse_qs, urlparse
 
 from .engine import Game
 from .human import GameAborted, WebIO
-from .i18n import ABILITY, KIND_NAMES, LANGS, M, render, role_name, roles_reference
-from .roles import KIND
+from .i18n import LANGS
+from .ui import SPEEDS, WAIT, roles_payload, snapshot
 
 PAGE = Path(__file__).with_name("static") / "index.html"
-SPEEDS = {"slow": 1.7, "normal": 1.0, "fast": 0.4, "instant": 0.0}
-WAIT = {"speech": 1.4, "event": 1.1, "private": 0.5}  # seconds before a line appears, at normal speed
 
 
 class Session:
@@ -36,7 +35,7 @@ class Session:
     def start(self, name, players, seed, seat, hints, lang):
         with self.lock:
             if self.io:
-                self.io.aborted = True
+                self.io.abort()
             seed = seed if seed is not None else random.randrange(10**6)
             if seat is None:
                 seat = random.Random(f"seat-{seed}").randrange(players)
@@ -47,7 +46,7 @@ class Session:
 
             def run():
                 try:
-                    game.run()
+                    asyncio.run(game.run())
                 except GameAborted:
                     pass
                 except Exception:
@@ -56,48 +55,7 @@ class Session:
             threading.Thread(target=run, daemon=True).start()
 
     def state(self, since, lang):
-        g = self.game
-        if g is None:
-            return {"game": None}
-
-        def t(m):
-            return render(m, lang, g.names)
-
-        h, over = g.human, g.phase == "over"
-        claims = g.pub.claims or (None,) * g.n
-        you_evil = h in g.team
-        seats = []
-        for s in range(g.n):
-            role = g.start_roles[s] if over else g.perceived[s] if s == h else g.roles[s] if you_evil and s in g.team else None
-            seats.append({
-                "seat": s, "name": g.name(s), "you": s == h, "alive": s not in g.dead,
-                "ghost": s in g.dead and s not in g.ghosts_used,
-                "claim": role_name(claims[s], lang) if claims[s] else None, "claim_key": claims[s],
-                "role": role_name(role, lang) if role else None, "role_key": role,
-                "evil": (over or you_evil) and s in g.team,
-                "history": [t(m) for m in g.history(s)],
-            })
-        log = []
-        for e in g.log[since:]:
-            m = e["m"]
-            log.append({"text": t(m), "private": e["private"], "chat": e["chat"], "speaker": e["speaker"],
-                        "key": m.key, "quote": t(m.args["text"]) if m.key == "speech" else None})
-        prompt = None
-        if self.io.prompt:
-            p = dict(self.io.prompt)
-            p["text"] = t(p["text"])
-            if "labels" in p:
-                p["labels"] = [t(x) for x in p["labels"]]
-            prompt = p
-        me = g.perceived[h]
-        return {"game": {
-            "seed": g.seed, "players": g.n, "day": g.day, "night": g.night, "phase": g.phase,
-            "you": h, "role": role_name(me, lang), "role_key": me, "ability": ABILITY[lang][me],
-            "kind": KIND[me], "kind_name": KIND_NAMES[lang][KIND[me]], "evil": you_evil,
-            "seats": seats, "log": log, "log_len": len(g.log), "prompt": prompt,
-            "notebook": [t(m) for m in g.notebook()], "winner": g.winner, "over": over,
-            "speaking": g.speaking, "speed": self.speed, "error": self.error,
-        }}
+        return snapshot(self.game, self.io, since, lang, self.speed, self.error)
 
 
 def make_handler(session):
@@ -128,7 +86,7 @@ def make_handler(session):
                     since = 0
                 self._send(200, session.state(since, lang))
             elif url.path == "/api/roles":
-                self._send(200, {"roles": roles_reference(lang), "note": render(M("first_night_note"), lang)})
+                self._send(200, roles_payload(lang))
             else:
                 self._send(404, {"error": "not found"})
 

@@ -28,7 +28,7 @@ def main():
     print(f"Blood on the Clocktower, Trouble Brewing: game #{seed}, {args.players} players.")
     print("Type a name (or its first letters) to choose a player; Enter takes the default.")
     print("Type 'notes' (or '?') at any prompt to see everything said and done so far.\n")
-    Game(args.players, seed, human=seat, hints=args.hints, name=args.name).run()
+    Game(args.players, seed, human=seat, hints=args.hints, name=args.name).play()
 
 
 if __name__ == "__main__":

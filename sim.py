@@ -19,14 +19,14 @@ def main():
     args = p.parse_args()
 
     if not args.games:
-        Game(args.players, args.seed, check=args.check).run()
+        Game(args.players, args.seed, check=args.check).play()
         return
 
     wins, days = Counter(), []
     start = time.time()
     for seed in range(args.seed, args.seed + args.games):
         g = Game(args.players, seed, out=None, check=args.check)
-        wins[g.run() or "none"] += 1
+        wins[g.play() or "none"] += 1
         days.append(g.day)
     print(f"{args.games} games, {args.players} players: {dict(wins)}; "
           f"mean length {sum(days) / len(days):.1f} days; {time.time() - start:.1f}s")

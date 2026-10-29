@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Clocktower Solo</title>
+<meta name="claude:viewport-fit-sides" content="cover">
 <style>
   :root {
     --bg: #f4f1ea; --panel: #fffdf8; --ink: #22201c; --muted: #6b665c; --line: #ddd6c8;
@@ -11,16 +12,24 @@
     --sel: #2f7d4f; --private-bg: #fbf3d9; --dead: #9a958b; --bubble: #ffffff; --night: #1b2240;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #14161c; --panel: #1d2028; --ink: #e8e4da; --muted: #a29d92; --line: #343846;
       --accent: #c2485b; --accent-ink: #fff; --gold: #d9a632; --good: #6ea3d8; --evil: #e06272;
       --sel: #4fb47a; --private-bg: #2f2a1c; --dead: #6c6a66; --bubble: #2a2e3a; --night: #0b0e1a;
+      color-scheme: dark;
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161c; --panel: #1d2028; --ink: #e8e4da; --muted: #a29d92; --line: #343846;
+      --accent: #c2485b; --accent-ink: #fff; --gold: #d9a632; --good: #6ea3d8; --evil: #e06272;
+      --sel: #4fb47a; --private-bg: #2f2a1c; --dead: #6c6a66; --bubble: #2a2e3a; --night: #0b0e1a;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; transition: background .8s; }
   body.night { background: color-mix(in srgb, var(--night) 55%, var(--bg)); }
-  header { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+  header { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--panel); }
   header h1 { font-size: 17px; margin: 0 8px 0 0; }
   .chip { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; white-space: nowrap; }
   .chip.good { border-color: var(--good); color: var(--good); }
@@ -33,8 +42,9 @@
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .seg button { border: 0; border-radius: 0; padding: 5px 10px; }
   .seg button.on { background: var(--ink); color: var(--panel); }
-  main { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; padding: 16px; max-width: 1420px; margin: 0 auto; }
-  @media (max-width: 960px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+  main { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; padding-block: 16px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); max-width: 1420px; margin: 0 auto; }
+  main > * { min-width: 0; }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; padding-block: 12px; } }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
 
   /* table */
@@ -112,10 +122,42 @@
   #modal .card { max-width: 480px; width: 100%; max-height: 80vh; overflow-y: auto; }
   #modal h3 { margin: 0 0 4px; }
 
+  #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 30; background: color-mix(in srgb, var(--bg) 85%, transparent); padding: 16px; }
+  #loading .card { display: flex; gap: 10px; align-items: center; }
+
+  /* phones */
+  @media (max-width: 640px) {
+    body { font-size: 14px; }
+    header { padding-block: 8px; gap: 6px; }
+    header h1 { font-size: 15px; width: 100%; }
+    #seed { display: none; }
+    main { padding-block: 10px 0; gap: 10px; }
+    .card { padding: 10px; }
+    .seat { width: 72px; margin: -30px 0 0 -36px; }
+    .token { width: 40px; height: 40px; font-size: 13px; border-width: 2px; }
+    .seat .name { font-size: 11px; }
+    .seat .claim, .seat .ghost, .seat .role { font-size: 10px; }
+    #center { inset: 30%; }
+    #center .big { font-size: 16px; }
+    #center .small { font-size: 11px; }
+    .bubble { max-width: 150px; font-size: 12px; padding: 5px 8px; }
+    #banner div { font-size: 22px; padding: 12px 22px; }
+    #prompt { position: sticky; bottom: env(safe-area-inset-bottom, 0px); z-index: 6; margin-top: 10px; max-height: 48vh; overflow-y: auto;
+              box-shadow: 0 -6px 18px rgba(0,0,0,.12); border-radius: 14px 14px 0 0; }
+    #prompt button { min-height: 42px; }
+    #side .pane { height: 55vh; min-height: 0; }
+    #roleCard .rname { font-size: 16px; }
+    #roleCard .rtext { font-size: 13px; }
+    #start { margin: 16px max(16px, env(safe-area-inset-left, 0px)); }
+    #start .row { grid-template-columns: 1fr; gap: 0; }
+  }
+
   /* start */
   #start { max-width: 580px; margin: 40px auto; }
   #start label { display: block; margin: 12px 0 4px; font-weight: 600; font-size: 14px; }
-  #start input, #start select { width: 100%; padding: 8px 10px; background: var(--bg); }
+  #start input, #start select { width: 100%; padding: 8px 10px; background: var(--bg); color: var(--ink); font: inherit; border: 1px solid var(--line); border-radius: 8px; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   #start .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   #start .check { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-weight: 400; }
   #start .check input { width: auto; }
@@ -180,6 +222,8 @@
   </div>
 </main>
 <div id="modal" hidden></div>
+<div id="loading" hidden><div class="card"><span class="dots"><span></span><span></span><span></span></span>
+  <span data-i="loading"></span></div></div>
 
 <script>
 const UI = {
@@ -202,6 +246,8 @@ const UI = {
     dead: "dead", phases: { setup: "Setting up", night: "Night", dawn: "Dawn", introductions: "Introductions", "private chats": "Private chats", discussion: "Discussion", nominations: "Nominations", over: "Game over" },
     dayN: "Day {n}", nightN: "Night {n}", wrong: "Something went wrong:",
     kinds: { townsfolk: "Townsfolk", outsider: "Outsiders", minion: "Minions", demon: "Demon" },
+    loading: "Loading the game engine (about 12 MB the first time)…",
+    engineFailed: "The game engine couldn't start in this browser.",
   },
   zh: {
     title: "血染钟楼 · 单人版", speed: "速度 ", slow: "慢", normal: "正常", fast: "快", instant: "立即",
@@ -222,9 +268,31 @@ const UI = {
     dead: "已死亡", phases: { setup: "准备中", night: "夜晚", dawn: "黎明", introductions: "自我介绍", "private chats": "私聊", discussion: "公开讨论", nominations: "提名", over: "游戏结束" },
     dayN: "第{n}天", nightN: "第{n}夜", wrong: "出错了：",
     kinds: { townsfolk: "镇民", outsider: "外来者", minion: "爪牙", demon: "恶魔" },
+    loading: "正在加载游戏引擎（首次约12 MB）……",
+    engineFailed: "游戏引擎无法在这个浏览器中启动。",
   },
 };
 const $ = id => document.getElementById(id);
+
+// Talk to the game: the local Python server, or (standalone build) Python running in a Web Worker.
+const STANDALONE = window.CT_STANDALONE || null;
+let worker = null, nextId = 0;
+const waiting = new Map();
+if (STANDALONE) {
+  worker = new Worker("worker.js?pyodide=" + encodeURIComponent(STANDALONE.pyodide));
+  worker.onmessage = e => { const w = waiting.get(e.data.id); if (w) { waiting.delete(e.data.id); w(e.data); } };
+  worker.onerror = e => { $("loading").hidden = false; $("loading").querySelector(".card").textContent = T("engineFailed") + " " + (e.message || ""); };
+}
+async function api(path, body) {
+  if (!worker) {
+    const r = await fetch(path, body === undefined ? undefined : { method: "POST", body: JSON.stringify(body) });
+    return { ok: r.ok, data: await r.json() };
+  }
+  const [p, qs] = path.split("?");
+  const query = Object.fromEntries(new URLSearchParams(qs || ""));
+  const res = await new Promise(resolve => { const id = ++nextId; waiting.set(id, resolve); worker.postMessage({ id, path: p, query, body }); });
+  return { ok: res.status < 400, data: res.data };
+}
 let lang = "en", since = 0, game = null, promptId = null, picked = [], view = "start", roles = [], rolesNote = "";
 let lastPhase = null, bubbles = {};
 try { lang = localStorage.getItem("ct-lang") || (navigator.language || "").startsWith("zh") && "zh" || "en"; } catch (e) {}
@@ -247,7 +315,8 @@ document.querySelectorAll("#langSeg button").forEach(b => b.onclick = async () =
 });
 
 async function loadRoles() {
-  const r = await (await fetch("/api/roles?lang=" + lang)).json();
+  const r = (await api("/api/roles?lang=" + lang)).data;
+  if (r.engine) { $("loading").hidden = false; $("loading").querySelector(".card").textContent = T("engineFailed") + " " + r.error; throw new Error(r.error); }
   roles = r.roles; rolesNote = r.note;
   drawChars();
 }
@@ -275,16 +344,16 @@ function show(v) {
 $("startBtn").onclick = async () => {
   const name = $("name").value.trim();
   try { localStorage.setItem("ct-name", name); } catch (e) {}
-  const r = await fetch("/api/new", { method: "POST", body: JSON.stringify({
-    name, players: +$("players").value, seat: $("seat").value, seed: $("seedIn").value.trim(), hints: $("hints").checked, lang }) });
-  if (!r.ok) { $("startErr").textContent = (await r.json()).error; return; }
+  const r = await api("/api/new", {
+    name, players: +$("players").value, seat: $("seat").value, seed: $("seedIn").value.trim(), hints: $("hints").checked, lang });
+  if (!r.ok) { $("startErr").textContent = r.data.error; return; }
   since = 0; promptId = null; picked = []; game = null; lastPhase = null; bubbles = {};
   $("pane-story").innerHTML = ""; $("pane-mine").innerHTML = ""; $("prompt").innerHTML = "";
   show("game");
 };
 $("newBtn").onclick = () => show("start");
 $("backBtn").onclick = () => show("game");
-$("speed").onchange = () => fetch("/api/speed", { method: "POST", body: JSON.stringify({ speed: $("speed").value }) });
+$("speed").onchange = () => api("/api/speed", { speed: $("speed").value });
 
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
   document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
@@ -294,8 +363,7 @@ document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
 // ---- polling --------------------------------------------------------------------------------
 async function poll() {
   try {
-    const r = await fetch(`/api/state?since=${since}&lang=${lang}`);
-    render((await r.json()).game);
+    render((await api(`/api/state?since=${since}&lang=${lang}`)).data.game);
   } catch (e) { /* server restarting */ }
   setTimeout(poll, 300);
 }
@@ -486,16 +554,17 @@ function drawPrompt(g, force) {
 
 async function answer(value) {
   const p = game.prompt;
-  const r = await fetch("/api/answer", { method: "POST", body: JSON.stringify({ id: p.id, value }) });
-  if (!r.ok) { const e = await r.json(); $("prompt").insertAdjacentHTML("beforeend", `<div class="err">${esc(e.error)}</div>`); return; }
+  const r = await api("/api/answer", { id: p.id, value });
+  if (!r.ok) { $("prompt").insertAdjacentHTML("beforeend", `<div class="err">${esc(r.data.error)}</div>`); return; }
   picked = []; game.prompt = null; drawTable(game); drawPrompt(game);
 }
 
 (async () => {
   applyLang();
-  await loadRoles();
-  const r = await fetch(`/api/state?since=0&lang=${lang}`);
-  game = (await r.json()).game;
+  if (STANDALONE) $("loading").hidden = false;
+  await loadRoles();  // in the standalone build this waits for Python to start
+  $("loading").hidden = true;
+  game = (await api(`/api/state?since=0&lang=${lang}`)).data.game;
   show(game ? "game" : "start");
   poll();
   setInterval(() => { if (game && view === "game") drawTable(game); }, 1000);  // let speech bubbles expire

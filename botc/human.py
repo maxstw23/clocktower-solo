@@ -4,7 +4,8 @@ The game asks through an IO object with four kinds of question: choose one of se
 pick a player (or pass), pick several players, or yes/no. TerminalIO asks in a terminal; WebIO
 hands each question to the browser (see web.py). Every question has a default.
 """
-import queue
+import asyncio
+import inspect
 import random
 
 from .agents import PROFILES, Agent
@@ -89,34 +90,37 @@ class TerminalIO:
 
 
 class WebIO:
-    """Questions wait in `prompt` until the browser answers through `answer`."""
+    """Questions wait in `prompt` until the page answers through `answer`. Works with the local
+    server (the game runs in its own thread) and in the browser (one thread, Pyodide)."""
 
     def __init__(self):
         self.prompt = None
         self.game = None
-        self._answers = queue.Queue()
+        self._future = None
+        self._loop = None
         self._next = 0
         self.aborted = False
 
-    def _ask(self, spec):
+    async def _ask(self, spec):
+        self._loop = asyncio.get_running_loop()
+        self._future = self._loop.create_future()
         self._next += 1
         spec["id"] = self._next
         self.prompt = spec
-        while True:
-            try:
-                pid, value = self._answers.get(timeout=0.5)
-            except queue.Empty:
-                if self.aborted:
-                    raise GameAborted
-                continue
-            if pid == spec["id"]:
-                self.prompt = None
-                return value
+        try:
+            return await self._future
+        finally:
+            self.prompt = None
+
+    def abort(self):
+        self.aborted = True
+        if self._future and not self._future.done():
+            self._loop.call_soon_threadsafe(self._future.set_exception, GameAborted())
 
     def answer(self, pid, value):
         """Validate and deliver an answer; returns an error message or None."""
         p = self.prompt
-        if p is None or p["id"] != pid:
+        if p is None or p["id"] != pid or self._future is None:
             return "That question is no longer open."
         kind = p["type"]
         if kind == "choose" and not (isinstance(value, int) and 0 <= value < len(p["labels"])):
@@ -128,7 +132,8 @@ class WebIO:
             return f"Choose {p['k']} different players."
         if kind == "yesno" and not isinstance(value, bool):
             return "Answer yes or no."
-        self._answers.put((pid, value))
+        fut = self._future
+        self._loop.call_soon_threadsafe(lambda: fut.done() or fut.set_result(value))
         return None
 
     def choose(self, prompt, labels, default=0):
@@ -144,13 +149,36 @@ class WebIO:
         return self._ask({"type": "yesno", "text": prompt, "default": default})
 
 
+class ChoiceIO:
+    """Lets the engine `await` every question, whether the IO answers at once or later."""
+
+    def __init__(self, io):
+        self.raw = io
+
+    async def _call(self, name, *args):
+        answer = getattr(self.raw, name)(*args)
+        return await answer if inspect.isawaitable(answer) else answer
+
+    def choose(self, prompt, labels, default=0):
+        return self._call("choose", prompt, labels, default)
+
+    def seat(self, prompt, seats, default=None):
+        return self._call("seat", prompt, seats, default)
+
+    def seats(self, prompt, seats, k, default):
+        return self._call("seats", prompt, seats, k, default)
+
+    def yes_no(self, prompt, default=False):
+        return self._call("yes_no", prompt, default)
+
+
 class HumanAgent(Agent):
     def __init__(self, seat, role, game, io):
         # The profile is only used for optional hints.
         super().__init__(seat, PROFILES["veteran"], game.n, random.Random(0))
         self.role = role  # what they believe they are
         self.game = game
-        self.io = io
+        self.io = ChoiceIO(io)
         io.game = game
         self.slayer_used = False
         self.team = frozenset()
@@ -162,54 +190,54 @@ class HumanAgent(Agent):
 
     # --- night -------------------------------------------------------------------------------
 
-    def ft_pick(self, game):
-        a, b = self.io.seats(M("q_ft"), self._others(False), 2, self._others(False)[:2])
+    async def ft_pick(self, game):
+        a, b = await self.io.seats(M("q_ft"), self._others(False), 2, self._others(False)[:2])
         return min(a, b), max(a, b)
 
-    def monk_pick(self, game):
-        return self.io.seat(M("q_monk"), self._others(), self._others()[0])
+    async def monk_pick(self, game):
+        return await self.io.seat(M("q_monk"), self._others(), self._others()[0])
 
-    def rk_pick(self, game):
-        return self.io.seat(M("q_rk"), self._others(), self._others()[0])
+    async def rk_pick(self, game):
+        return await self.io.seat(M("q_rk"), self._others(), self._others()[0])
 
-    def butler_pick(self, game):
-        return self.io.seat(M("q_butler"), self._others(), self._others()[0])
+    async def butler_pick(self, game):
+        return await self.io.seat(M("q_butler"), self._others(), self._others()[0])
 
-    def poison_pick(self, game):
+    async def poison_pick(self, game):
         targets = [s for s in self._others() if s not in self.team] or self._others()
-        return self.io.seat(M("q_poison"), self._others(), targets[0])
+        return await self.io.seat(M("q_poison"), self._others(), targets[0])
 
-    def kill_pick(self, game):
+    async def kill_pick(self, game):
         targets = [s for s in self._others() if s not in self.team] or self._others()
-        return self.io.seat(M("q_kill"), self._others(), targets[0])
+        return await self.io.seat(M("q_kill"), self._others(), targets[0])
 
     # --- day ---------------------------------------------------------------------------------
 
     def statement(self, game):
         return None  # the human speaks in their own turn
 
-    def invite(self, game, free):
-        n = self.io.choose(M("q_aside"), [M("aside_no"), M("aside_one"), M("aside_two")], default=0)
+    async def invite(self, game, free):
+        n = await self.io.choose(M("q_aside"), [M("aside_no"), M("aside_one"), M("aside_two")], default=0)
         if n == 0:
             return []
         if n == 1 or len(free) < 2:
-            s = self.io.seat(M("q_invite"), free)
+            s = await self.io.seat(M("q_invite"), free)
             return [] if s is None else [s]
-        return list(self.io.seats(M("q_invite"), free, 2, free[:2]))
+        return list(await self.io.seats(M("q_invite"), free, 2, free[:2]))
 
-    def accept(self, game, inviter, invited):
+    async def accept(self, game, inviter, invited):
         others = [S(x) for x in invited if x != self.seat]
         extra = M("together", list=L(others, conj=True)) if others else ""
-        return self.io.yes_no(M("q_accept", p=S(inviter), extra=extra))
+        return await self.io.yes_no(M("q_accept", p=S(inviter), extra=extra))
 
-    def nominate(self, game, nominated):
+    async def nominate(self, game, nominated):
         if self.seat in game.dead:
             return None
         allowed = [s for s in self._others() if s not in nominated]
         if not allowed:
             return None
-        return self.io.seat(M("q_nominate"), allowed)
+        return await self.io.seat(M("q_nominate"), allowed)
 
-    def vote(self, game, nominee, yes, needed, block, ghost):
+    async def vote(self, game, nominee, yes, needed, block, ghost):
         kind = M("your_ghost_vote") if ghost else M("your_vote")
-        return self.io.yes_no(M("q_vote", t=S(nominee), kind=kind, yes=yes, needed=needed))
+        return await self.io.yes_no(M("q_vote", t=S(nominee), kind=kind, yes=yes, needed=needed))
