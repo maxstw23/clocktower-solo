@@ -1,19 +1,26 @@
 """Possible-worlds solver.
 
-A world is a complete starting role assignment that agrees with the public record. Good players
-are assumed to claim what they believe they are, so a world is fixed by who is evil (and as what)
-plus who, if anyone, is the Drunk.
+A world is a complete starting role assignment that agrees with the public record. A good player's
+*latest* claim is taken as what they believe they are, so a world is fixed by who is evil (and as
+what), who if anyone is the Drunk, and which good players' roles are unknown: those who haven't
+claimed, and at most one good player who is still bluffing.
 
-Some records only fit a world with an *excuse*: a poisoning, a Spy/Recluse misregistration, or the
-Drunk. Each world carries the excuses it needs, so bounded players can filter worlds by which
-excuses they think of and how many they tolerate (see agents.believe).
+Some records only fit a world with an *excuse*: a poisoning, a Spy/Recluse misregistration, the
+Drunk, or a good player's bluff. Each world carries the excuses it needs, so bounded players can
+filter worlds by which excuses they think of and how many they tolerate (see agents.believe).
+
+A bluff is only considered where the record gives a reason to (`liar_candidates`): a double claim,
+an Outsider or evil claim, or a claimed ability that visibly failed. Allowing it everywhere would
+multiply the worlds by the number of players. A lie that leaves no such trace is believed, which
+is also how a real table works.
 """
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from itertools import combinations, permutations, product
 
 from .public import day_tick, night_tick
-from .roles import KIND, MINIONS, OUTSIDERS, SETUP, TOWNSFOLK, is_evil
+from .roles import KIND, MINIONS, OUTSIDERS, SETUP, TOWNSFOLK, WILD, is_evil
 
 OK, MISREG, FAIL = 0, 1, 2
 SPY_EXTRA = frozenset(TOWNSFOLK + OUTSIDERS)
@@ -28,6 +35,9 @@ FREE = {"empath": 1, "chef": 1, "fortune_teller": 1, "washerwoman": 1, "libraria
         "investigator": 1, "undertaker": 1, "ravenkeeper": 1, "monk": 1}
 POISON_WEIGHT, MISREG_WEIGHT, DRUNK_WEIGHT = 0.1, 0.2, 0.2  # Occam: consider excuses, but discount them
 NIGHT_KILLED_EVIL = 0.1  # the Demon rarely kills its own team
+BLUFF_WEIGHT = 0.2       # a good player is still bluffing
+CHANGE_WEIGHT = 0.5      # per claim change by a good player: having lied costs trust
+OF_KIND = {"townsfolk": TOWNSFOLK, "outsider": OUTSIDERS}
 
 
 @dataclass(frozen=True)
@@ -37,6 +47,7 @@ class World:
     poison_nights: int  # nights on which a poisoning is needed to explain the record
     misregs: int        # Spy/Recluse misregistrations needed
     weight: float       # relative plausibility (see FREE)
+    bluffs: int = 0     # good players whose current claim is a bluff
 
     @property
     def drunk(self):
@@ -44,36 +55,75 @@ class World:
 
     @property
     def excuses(self):
-        return self.poison_nights + self.misregs + (self.drunk is not None)
+        return self.poison_nights + self.misregs + (self.drunk is not None) + self.bluffs
 
 
-def structures(n, claims):
+@lru_cache(maxsize=4096)
+def liar_candidates(pub):
+    """Players the record gives a reason to suspect of a good bluff."""
+    claims = pub.claims
+    found, by_role = set(), defaultdict(list)
+    outsiders = [s for s, r in enumerate(claims) if r is not None and KIND[r] == "outsider"]
+    if len(outsiders) > SETUP[pub.n][1] + 2:  # more than even a Baron allows
+        found.update(outsiders)
+    for s, r in enumerate(claims):
+        if r is None:
+            continue
+        by_role[r].append(s)
+        if is_evil(r) or r == "drunk":
+            found.add(s)
+    for seats in by_role.values():
+        if len(seats) > 1:
+            found.update(seats)
+    for d in pub.deaths:
+        if (d.cause == "night" and claims[d.seat] == "soldier") or (d.cause == "execution" and claims[d.seat] == "saint"):
+            found.add(d.seat)
+    for fn in pub.first_noms:
+        if not fn.triggered and claims[fn.nominee] == "virgin":
+            found.add(fn.nominee)
+    for r in pub.reports:
+        if r.kind == "monk" and claims[r.seat] == "monk" and any(
+                d.seat == r.data[0] and d.cause == "night" and d.tick == night_tick(r.night) for d in pub.deaths):
+            found.add(r.seat)
+        # Info naming a good character for someone who claims something else: one of them may be hiding.
+        if r.kind in ("washerwoman", "librarian") and r.data[0] is not None \
+                and r.data[2] not in (claims[r.data[0]], claims[r.data[1]]):
+            found.update(x for x in r.data[:2] if claims[x] is not None)
+        if r.kind in ("undertaker", "ravenkeeper") and not is_evil(r.data[1]) and claims[r.data[0]] not in (None, r.data[1]):
+            found.add(r.data[0])
+    return tuple(sorted(found))
+
+
+def structures(n, claims, liars=()):
     """All starting role assignments allowed by the claims and the setup counts."""
     tf, out, mn, _ = SETUP[n]
     result = []
     for demon in range(n):
         for mins in combinations([s for s in range(n) if s != demon], mn):
             good = [s for s in range(n) if s != demon and s not in mins]
-            gclaims = [claims[s] for s in good]
-            if any(is_evil(c) or c == "drunk" for c in gclaims) or len(set(gclaims)) < len(gclaims):
-                continue
-            n_out = sum(KIND[c] == "outsider" for c in gclaims)
-            for mroles in permutations(MINIONS, mn):
-                expected = out + 2 * ("baron" in mroles)
-                if n_out == expected:
-                    drunks = (None,)
-                elif n_out == expected - 1:
-                    drunks = [s for s in good if KIND[claims[s]] == "townsfolk"]
-                else:
+            for bluffer in [None] + [s for s in liars if s in good]:
+                honest = [s for s in good if claims[s] is not None and s != bluffer]
+                wild = [s for s in good if claims[s] is None or s == bluffer]
+                hclaims = [claims[s] for s in honest]
+                if any(is_evil(c) or c == "drunk" for c in hclaims) or len(set(hclaims)) < len(hclaims):
                     continue
-                for drunk in drunks:
-                    roles = list(claims)
-                    roles[demon] = "imp"
-                    for s, r in zip(mins, mroles):
-                        roles[s] = r
-                    if drunk is not None:
-                        roles[drunk] = "drunk"
-                    result.append(tuple(roles))
+                n_out = sum(KIND[c] == "outsider" for c in hclaims)
+                for mroles in permutations(MINIONS, mn):
+                    expected = out + 2 * ("baron" in mroles)
+                    for drunk in [None] + [s for s in honest if KIND[claims[s]] == "townsfolk"]:
+                        need = expected - n_out - (drunk is not None)  # Outsiders among unknown roles
+                        if not 0 <= need <= len(wild):
+                            continue
+                        for outs in combinations(wild, need):
+                            roles = list(claims)
+                            roles[demon] = "imp"
+                            for s, r in zip(mins, mroles):
+                                roles[s] = r
+                            for s in wild:
+                                roles[s] = "?outsider" if s in outs else "?townsfolk"
+                            if drunk is not None:
+                                roles[drunk] = "drunk"
+                            result.append(tuple(roles))
     return result
 
 
@@ -98,15 +148,22 @@ def evaluate(roles, pub, allow_poison=True, allow_misreg=True):
     def role_at(s, tick):
         return "imp" if s == promo_seat and tick > promo_tick else roles[s]
 
-    def registers(s, tick):
+    concrete = {r for r in roles if r not in WILD}
+
+    def could_be(s, role):
+        """An unknown good role could be any role of its kind not otherwise in play."""
+        return roles[s] == role or (roles[s] in WILD and role in OF_KIND[KIND[roles[s]]] and role not in concrete)
+
+    def match(s, role, tick):
         r = role_at(s, tick)
-        return r, SPY_EXTRA if r == "spy" else RECLUSE_EXTRA if r == "recluse" else ()
+        if r == role or (r in WILD and could_be(s, role)):
+            return OK
+        if (r == "spy" and role in SPY_EXTRA) or (r == "recluse" and role in RECLUSE_EXTRA):
+            return MISREG
+        return FAIL
 
     def ping(a, b, role, tick):
-        (ra, ea), (rb, eb) = registers(a, tick), registers(b, tick)
-        if role in (ra, rb):
-            return OK
-        return MISREG if role in ea or role in eb else FAIL
+        return min(match(a, role, tick), match(b, role, tick))
 
     def evil_count(seats, count, tick):
         flex = [s for s in seats if role_at(s, tick) in ("spy", "recluse")]
@@ -159,11 +216,9 @@ def evaluate(roles, pub, allow_poison=True, allow_misreg=True):
                 return FAIL
             return MISREG if counts[d[0]] else OK
         if r.kind == "undertaker":
-            ra, ea = registers(d[0], day_tick(r.night - 1))
-            return OK if d[1] == ra else MISREG if d[1] in ea else FAIL
+            return match(d[0], d[1], day_tick(r.night - 1))
         if r.kind == "ravenkeeper":
-            ra, ea = registers(d[0], tick)
-            return OK if d[1] == ra else MISREG if d[1] in ea else FAIL
+            return match(d[0], d[1], tick)
         return OK
 
     req = defaultdict(set)     # night -> seats that must have been poisoned
@@ -215,7 +270,7 @@ def evaluate(roles, pub, allow_poison=True, allow_misreg=True):
     for sh in pub.shots:
         target = role_at(sh.target, day_tick(sh.day))
         if sh.killed:
-            if roles[sh.shooter] != "slayer":
+            if not could_be(sh.shooter, "slayer"):
                 return None
             forbid[sh.day].add(sh.shooter)
             if target == "recluse" and allow_misreg:
@@ -229,7 +284,7 @@ def evaluate(roles, pub, allow_poison=True, allow_misreg=True):
     for fn in pub.first_noms:
         nominator = role_at(fn.nominator, day_tick(fn.day))
         if fn.triggered:
-            if roles[fn.nominee] != "virgin":
+            if not could_be(fn.nominee, "virgin"):
                 return None
             forbid[fn.day].add(fn.nominee)
             if nominator == "spy" and allow_misreg:
@@ -280,15 +335,25 @@ def evaluate(roles, pub, allow_poison=True, allow_misreg=True):
     elif not poison_ok(req):
         return None
 
+    bluffs = sum(1 for s in range(n) if roles[s] in WILD and pub.claims[s] is not None)
+    for s, changes in enumerate(_claim_changes(pub)):
+        if changes and not is_evil(roles[s]):
+            weight *= CHANGE_WEIGHT ** changes
     weight *= POISON_WEIGHT ** len(req) * MISREG_WEIGHT ** misregs * (DRUNK_WEIGHT if "drunk" in roles else 1)
-    return World(roles, current, len(req), misregs, weight)
+    weight *= BLUFF_WEIGHT ** bluffs
+    return World(roles, current, len(req), misregs, weight, bluffs)
+
+
+@lru_cache(maxsize=4096)
+def _claim_changes(pub):
+    return tuple(pub.claim_changes(s) for s in range(pub.n))
 
 
 def _extends(pub, base):
     """True if `pub` is `base` plus later events (records only ever grow)."""
-    return pub.claims == base.claims and all(
+    return pub.claims == base.claims and liar_candidates(pub) == liar_candidates(base) and all(
         getattr(pub, f)[:len(getattr(base, f))] == getattr(base, f)
-        for f in ("reports", "deaths", "shots", "first_noms"))
+        for f in ("reports", "deaths", "shots", "first_noms", "claim_log"))
 
 
 class Solver:
@@ -301,9 +366,9 @@ class Solver:
         self.cache_size = cache_size
 
     def structures(self, pub):
-        key = (pub.n, pub.claims)
+        key = (pub.n, pub.claims, liar_candidates(pub))
         if key not in self._structs:
-            self._structs[key] = structures(pub.n, pub.claims)
+            self._structs[key] = structures(*key)
         return self._structs[key]
 
     def worlds(self, pub, allow_poison=True, allow_misreg=True, base=None):
@@ -317,7 +382,7 @@ class Solver:
             return hit
         if not (allow_poison and allow_misreg):
             candidates = [w.roles for w in self.worlds(pub, base=base)]
-        elif base is not None:
+        elif base is not None and _extends(pub, base):
             candidates = [w.roles for w in self.worlds(base)]
         elif self._latest is not None and self._latest != pub and _extends(pub, self._latest):
             candidates = [w.roles for w in self.worlds(self._latest)]
@@ -340,10 +405,16 @@ class Belief:
     evil: tuple
     relaxed: bool = False  # had to widen its assumptions to find any world
     count: int = 0         # number of worlds
+    pair: tuple = ()       # pair[r][t]: weight of worlds where r is good and t is evil
 
     @classmethod
     def empty(cls, n):
         return cls(0.0, (0.0,) * n, (0.0,) * n)
+
+    def evil_if_good(self, t, r):
+        """How likely t is evil if r is good."""
+        good_r = self.total - self.evil[r]
+        return self.pair[r][t] / good_r if self.pair and good_r > 0 else 0.0
 
     def demon_pct(self, s):
         return int(100 * self.demon[s] / self.total) if self.total else 0
@@ -362,9 +433,16 @@ class Belief:
 
 def tally(n, worlds, relaxed=False):
     demon, evil = [0.0] * n, [0.0] * n
+    pair = [[0.0] * n for _ in range(n)]
     for w in worlds:
         demon[w.demon] += w.weight
-        for s, r in enumerate(w.roles):
-            if is_evil(r):
-                evil[s] += w.weight
-    return Belief(sum(w.weight for w in worlds), tuple(demon), tuple(evil), relaxed, len(worlds))
+        bad = [s for s, r in enumerate(w.roles) if is_evil(r)]
+        for s in bad:
+            evil[s] += w.weight
+        for r in range(n):
+            if r not in bad:
+                row = pair[r]
+                for t in bad:
+                    row[t] += w.weight
+    return Belief(sum(w.weight for w in worlds), tuple(demon), tuple(evil), relaxed, len(worlds),
+                  tuple(map(tuple, pair)))

@@ -6,6 +6,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from botc.engine import Game  # noqa: E402
+from botc.human import TerminalIO  # noqa: E402
 from botc.public import Death, Public, Report  # noqa: E402
 from botc.worlds import Solver  # noqa: E402
 
@@ -13,14 +14,14 @@ from botc.worlds import Solver  # noqa: E402
 def test_truth_never_eliminated():
     for players in (7, 8, 10):
         for seed in range(10):
-            Game(players, seed, out=None, check=True).run()
+            Game(players, seed, out=None, check=True).play()
 
 
 def test_same_seed_same_game():
     logs = []
     for _ in range(2):
         lines = []
-        Game(8, 5, out=lines.append).run()
+        Game(8, 5, out=lines.append).play()
         logs.append(lines)
     assert logs[0] == logs[1]
 
@@ -39,14 +40,132 @@ def test_human_seat_with_default_answers():
         raise EOFError
     for seed in range(4):
         for seat in range(8):
-            g = Game(8, seed, out=None, check=True, human=seat, inp=no_input, hints=True)
-            assert g.run() in ("good", "evil", None)
+            g = Game(8, seed, out=None, check=True, human=seat, hints=True,
+                     io=TerminalIO(inp=no_input, out=lambda msg: None))
+            assert g.play() in ("good", "evil", None)
+
+
+def test_changing_your_claim_costs_trust():
+    from botc.agents import REFERENCE, believe
+    claims = ("empath", "chef", "monk", "slayer", "soldier", "virgin", "mayor")
+    honest = Public(7)
+    for s, c in enumerate(claims):
+        honest = honest.claim(1, s, c)
+    switched = Public(7).claim(1, 0, "mayor")
+    for s, c in enumerate(claims[1:], 1):
+        switched = switched.claim(1, s, c)
+    switched = switched.claim(2, 0, "empath")  # same final claims, but seat 0 lied first
+    solver = Solver()
+    before = believe(solver, honest, REFERENCE).evil_pct(0)
+    after = believe(solver, switched, REFERENCE).evil_pct(0)
+    assert after > before
+
+
+def test_double_claim_allows_a_good_bluffer():
+    # Two Empaths: either may be the good bluffer, so neither is forced to be evil.
+    claims = ("empath", "chef", "monk", "slayer", "soldier", "virgin", "empath")
+    pub = Public(7)
+    for s, c in enumerate(claims):
+        pub = pub.claim(1, s, c)
+    worlds = Solver().worlds(pub)
+    assert any(w.bluffs == 1 and w.roles[0] == "?townsfolk" for w in worlds)
+    assert any(w.bluffs == 1 and w.roles[6] == "?townsfolk" for w in worlds)
+
+
+def _keys(m, out):
+    from botc.i18n import L, M
+    if isinstance(m, M):
+        out.add(m.key)
+        for a in m.args.values():
+            _keys(a, out)
+    elif isinstance(m, L):
+        for x in m.items:
+            _keys(x, out)
+    return out
+
+
+def test_every_message_exists_in_both_languages():
+    from botc.i18n import TEXT
+    keys = set()
+
+    class Recorder(TerminalIO):
+        def _ask(self, prompt, parse, default):
+            return default
+        def choose(self, prompt, labels, default=0):
+            for m in [prompt, *labels]:
+                _keys(m, keys)
+            return default
+        def seat(self, prompt, seats, default=None):
+            _keys(prompt, keys)
+            return default
+        def seats(self, prompt, seats, k, default):
+            _keys(prompt, keys)
+            return list(default)
+        def yes_no(self, prompt, default=False):
+            _keys(prompt, keys)
+            return default
+
+    for seed in range(6):
+        for seat in (0, 3):
+            g = Game(8, seed, out=None, human=seat, hints=True, io=Recorder(out=lambda m: None))
+            g.play()
+            for e in g.log:
+                _keys(e["m"], keys)
+            for m in g.notebook():
+                _keys(m, keys)
+    missing = {lang: sorted(k for k in keys if k not in TEXT[lang]) for lang in TEXT}
+    assert not any(missing.values()), missing
+
+
+def test_evil_human_can_steer_the_kill():
+    from botc.engine import Game as G
+    from botc.public import night_tick
+    for seed in range(40):
+        probe = G(8, seed, out=None)
+        minion = next((s for s in probe.team if s != probe.demon), None)
+        if minion is None:
+            continue
+
+        class Plotter(TerminalIO):
+            target = None
+            def choose(self, prompt, labels, default=0):
+                if prompt.key == "q_aside":
+                    return 1
+                if prompt.key == "q_chat":
+                    keys = [l.key for l in labels]
+                    if "c_kill" in keys and self.target is None:
+                        return keys.index("c_kill")
+                    return keys.index("c_done")
+                return default
+            def seat(self, prompt, seats, default=None):
+                if prompt.key == "q_invite":
+                    return probe.demon
+                if prompt.key == "q_kill_suggest":
+                    Plotter.target = seats[-1]
+                    return seats[-1]
+                return default
+            def seats(self, prompt, seats, k, default):
+                return list(default)
+            def yes_no(self, prompt, default=False):
+                return default
+
+        io = Plotter(out=lambda m: None)
+        g = G(8, seed, out=None, human=minion, io=io)
+        g.play()
+        if Plotter.target is None or g.day < 1:
+            continue
+        night2 = [d.seat for d in g.pub.deaths if d.cause == "night" and d.tick == night_tick(2)]
+        protected = any(Plotter.target == r.data[0] for r in g.pub.reports if r.kind == "monk" and r.night == 2)
+        if night2 or not protected:
+            assert night2 == [Plotter.target] or g.roles[Plotter.target] == "soldier" or g.winner
+        return
+    raise AssertionError("no seed with an evil minion seat")
 
 
 def test_empath_zero_clears_neighbours():
     # 7 players: 5 townsfolk, 0 outsiders, 1 minion, 1 imp
     claims = ("empath", "chef", "monk", "slayer", "soldier", "virgin", "mayor")
-    pub = Public(7, claims, reports=(Report(0, 1, "empath", (0,)),))
+    pub = Public(7, claims, reports=(Report(0, 1, "empath", (0,)),))  # claims given directly, no history
     worlds = [w for w in Solver().worlds(pub) if w.excuses == 0 and w.roles[0] == "empath"]
     assert worlds and all(w.demon not in (1, 6) for w in worlds)
 

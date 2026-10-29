@@ -8,12 +8,16 @@ OUTSIDERS = ("butler", "drunk", "recluse", "saint")
 MINIONS = ("poisoner", "spy", "scarlet_woman", "baron")
 DEMONS = ("imp",)
 ALL_ROLES = TOWNSFOLK + OUTSIDERS + MINIONS + DEMONS
+# In a world, the role of a good player whose claim isn't taken at face value (silent, or bluffing).
+WILD = ("?townsfolk", "?outsider")
 
 KIND = {
     **{r: "townsfolk" for r in TOWNSFOLK},
     **{r: "outsider" for r in OUTSIDERS},
     **{r: "minion" for r in MINIONS},
     **{r: "demon" for r in DEMONS},
+    "?townsfolk": "townsfolk",
+    "?outsider": "outsider",
 }
 
 # players -> (townsfolk, outsiders, minions, demons), before the Baron's adjustment
@@ -31,4 +35,6 @@ def is_evil(role):
 
 
 def pretty(role):
+    if role in WILD:
+        return "unknown " + role[1:].title()
     return role.replace("_", " ").title()
