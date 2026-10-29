@@ -28,11 +28,12 @@ RECLUSE_EXTRA = frozenset(MINIONS + ("imp",))
 PING_ROLES = ("washerwoman", "librarian", "investigator")
 
 # Likelihood that an evil or Drunk reporter would have said exactly this, relative to a sober good
-# player whose report was forced. Values below 1 make consistent info claims more trusted, which
-# sounds right but backfires: evil players optimise their lies against this very model, so the
-# bonus mostly rewards them (good's win rate at 8 players fell from ~43% to ~30%). Neutral for now.
-FREE = {"empath": 1, "chef": 1, "fortune_teller": 1, "washerwoman": 1, "librarian": 1,
-        "investigator": 1, "undertaker": 1, "ravenkeeper": 1, "monk": 1}
+# player whose report was forced. Without it, specific true info makes its reporter look evil
+# (few worlds fit them being good, many fit them lying): on day 1 the town suspected honest info
+# roles more than evil players (47% of pairs). These values bring that to 60% with no change to
+# good's win rate, now that evil lies are bounded by skill and never frame teammates.
+FREE = {"empath": 0.5, "chef": 0.5, "fortune_teller": 0.7, "washerwoman": 0.35, "librarian": 0.35,
+        "investigator": 0.35, "undertaker": 0.35, "ravenkeeper": 0.35, "monk": 1}
 POISON_WEIGHT, MISREG_WEIGHT, DRUNK_WEIGHT = 0.1, 0.2, 0.2  # Occam: consider excuses, but discount them
 NIGHT_KILLED_EVIL = 0.1  # the Demon rarely kills its own team
 BLUFF_WEIGHT = 0.2       # a good player is still bluffing

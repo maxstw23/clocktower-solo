@@ -1076,13 +1076,13 @@ class Game:
                 and agent.role in SPENT and any(claims[y] == "undertaker" for y in self.alive if y != x))
 
     async def _mayor_plea(self):
-        """Three alive and a Mayor claim: the Mayor asks the table not to execute anyone."""
+        """Three or four alive and a Mayor claim: the Mayor asks the table not to execute anyone."""
         claims = self.pub.claims or ()
-        if len(self.alive) != 3 or not claims:
+        if len(self.alive) not in (3, 4) or not claims:
             return
         for x in self.alive:
             if claims[x] == "mayor" and x != self.human:
-                await self.speech(x, self.m("mayor_plea"))
+                await self.speech(x, self.m("mayor_plea" if len(self.alive) == 3 else "mayor_plea4"))
 
     async def _plan_virgin_test(self):
         """Someone proposes that a first-night info role nominate the claimed Virgin: one

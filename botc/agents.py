@@ -263,8 +263,24 @@ class GoodAgent(Agent):
         mayors = [s for s in game.alive if claims[s] == "mayor"]
         return any(s == self.seat and self.role == "mayor" or self.suspicion(game, s) < 40 for s in mayors)
 
+    def waits(self, game):
+        """Four alive: a wrong execution now loses, while no execution leaves the Imp one kill and
+        the town a better guess at three (or a Mayor win). So hold off unless someone is clearly evil,
+        when a Mayor I trust is alive or the Minions look dead."""
+        if len(game.alive) != 4:
+            return False
+        b = game.belief_of(self)
+        others = [s for s in game.alive if s != self.seat]
+        if max(self.suspicion(game, s) for s in others) >= 70:
+            return False
+        claims = game.pub.claims or ()
+        mayor = any(claims and claims[s] == "mayor" and (s == self.seat and self.role == "mayor" or
+                                                         self.suspicion(game, s) < 40) for s in game.alive)
+        minions_dead = self.profile.name != "novice" and sum(b.evil_pct(s) for s in others) < 125
+        return mayor or minions_dead
+
     def nominate(self, game, nominated):
-        if self.trusts_mayor(game):
+        if self.trusts_mayor(game) or self.waits(game):
             return None
         cands = [s for s in game.alive if s != self.seat and s not in nominated]
         if KIND[self.role] == "townsfolk":
@@ -285,7 +301,7 @@ class GoodAgent(Agent):
 
     def vote(self, game, nominee, yes, needed, block, ghost):
         """Yes if suspicious enough and clearly more suspicious than whoever is already on the block."""
-        if nominee == self.seat or self.trusts_mayor(game):
+        if nominee == self.seat or self.trusts_mayor(game) or self.waits(game):
             return False
         endgame = len(game.alive) <= 4
         sus = self.suspicion(game, nominee)
