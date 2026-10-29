@@ -441,7 +441,8 @@ class Game:
         if kind in PING:
             pool = PING[kind]
             if malf:
-                opts = [(a, b, r) for a, b in combinations(others, 2) for r in pool]
+                # The Storyteller never shows a player their own character as someone else's.
+                opts = [(a, b, r) for a, b in combinations(others, 2) for r in pool if r != kind]
             else:
                 opts = [(min(a, b), max(a, b), r)
                         for a in others for r in sorted(self._registers_as(a, pool)) for b in others if b != a]
@@ -467,7 +468,9 @@ class Game:
                 answers.add(False)
             return [(a, b, y) for y in sorted(answers)]
         # undertaker, ravenkeeper: learn a character
-        return [(arg, r) for r in (ALL_ROLES if malf else sorted(self._registers_as(arg, ALL_ROLES)))]
+        if malf:
+            return [(arg, r) for r in ALL_ROLES if r != kind]
+        return [(arg, r) for r in sorted(self._registers_as(arg, ALL_ROLES))]
 
     # --- day ---------------------------------------------------------------------------------
 
