@@ -9,6 +9,7 @@ Evil players know their team and judge their moves by running the town's reasoni
 Good players may bluff too: a fragile info role can hide behind a cover claim and reveal later.
 They don't have to, and it costs them: a changed claim lowers everyone's trust in them.
 """
+import random
 from dataclasses import dataclass
 
 from itertools import combinations
@@ -355,6 +356,10 @@ class EvilAgent(Agent):
         if self.seat in game.dead or not cands or not game.pub.claims:
             return None
         b = self.read(game)
+        doomed = [s for s in self.team if s in game.alive and self.busses(game, s) and b.evil_pct(s) >= 60
+                  and random.Random(f"bus-{game.seed}-{game.day}-{s}").random() < 0.5]
+        if doomed:  # lead the charge against a Minion who is lost anyway
+            return doomed[0], self.explain(game, doomed[0], b)
         top = self.rank(cands, lambda s: -b.suspicion(s))[0]
         if b.suspicion(top) < self.profile.speak_at:
             return None
@@ -368,8 +373,29 @@ class EvilAgent(Agent):
         top = self.rank(cands, lambda s: -b.suspicion(s))[0]
         return top if b.suspicion(top) >= self.threshold(self.profile.nominate_at, game) else None
 
+    def busses(self, game, minion):
+        """A veteran Demon may sell out a Minion the town has already settled on, to look good."""
+        return (self.seat == game.demon and self.profile.name == "veteran" and minion in self.team
+                and minion != self.seat and self.read(game).evil_pct(minion) >= 55)
+
+    def wants_starpass(self, game):
+        """Kill yourself so a Minion becomes the Imp: when only moderately suspected (high suspicion
+        would make the suicide look like what it is), and best when your own claimed info would then
+        be believed and point at good players."""
+        if game.night < 2 or self.seat != game.demon or self.profile.name == "novice" or len(game.alive) < 5:
+            return False
+        if not [s for s in game.alive if s in self.team and s != self.seat]:
+            return False
+        sus = self.read(game).suspicion(self.seat)
+        framed = any(r.seat == self.seat and r.kind in ("empath", "chef", "investigator", "fortune_teller",
+                                                       "washerwoman", "librarian") for r in game.known.reports)
+        roll = random.Random(f"starpass-{game.seed}-{game.night}-{self.seat}").random()
+        return 25 <= sus <= 55 and roll < (0.5 if framed else 0.15)
+
     def vote(self, game, nominee, yes, needed, block, ghost):
         """Vote like a townsperson on good players, never for the team or to replace a good player."""
+        if self.busses(game, nominee) and yes + 2 >= needed and block is None:
+            return True  # the Minion is going anyway: be seen voting for it
         if nominee in self.team or (block is not None and block not in self.team):
             return False
         if yes + 1 >= needed:
@@ -387,6 +413,8 @@ class EvilAgent(Agent):
         return self.rank(self._targets(game), lambda s: (-self.value(game, s), b.evil_pct(s)))[0]
 
     def kill_pick(self, game):
+        if self.wants_starpass(game):
+            return self.seat
         wish = game.suggest.get("kill")
         if wish in game.alive and wish not in self.team:
             return wish

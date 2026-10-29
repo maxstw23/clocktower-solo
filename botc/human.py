@@ -233,7 +233,8 @@ class HumanAgent(Agent):
         claims = game.pub.claims or (None,) * game.n
         targets = ([s for s in self._others() if s not in self.team and claims[s] != "soldier" and s not in game.survived]
                    or [s for s in self._others() if s not in self.team] or self._others())
-        return await self.io.seat(M("q_kill"), self._others(), targets[0])
+        # The Imp may choose itself: a Minion then becomes the Imp.
+        return await self.io.seat(M("q_kill"), self._others() + [self.seat], targets[0])
 
     # --- day ---------------------------------------------------------------------------------
 

@@ -310,14 +310,20 @@ class Game:
         if self.roles[s] == "poisoner":
             self.poisoned = None
         if s == self.demon:
-            sw = next((x for x in self.alive if self.roles[x] == "scarlet_woman" and self.poisoned != x), None)
-            if sw is None or alive_before < 5:
+            minions = [x for x in self.alive if KIND[self.roles[x]] == "minion"]
+            sw = [x for x in minions if self.roles[x] == "scarlet_woman" and self.poisoned != x]
+            if cause == "night":
+                heirs = sw or minions  # the Imp killed itself: a Minion becomes the Imp
+            else:
+                heirs = sw if alive_before >= 5 else []
+            if not heirs:
                 self.winner = "good"
                 return
-            self.roles[sw] = "imp"
-            self.demon = sw
-            self.note(M("note_sw", t=S(sw)))
-            if sw == self.human:
+            heir = heirs[0] if len(heirs) == 1 else self.st.pick_heir(self, heirs)
+            self.roles[heir] = "imp"
+            self.demon = heir
+            self.note(M("note_starpass" if cause == "night" else "note_sw", t=S(heir)))
+            if heir == self.human:
                 await self.tell(M("now_imp"))
         if cause == "execution" and self.roles[s] == "saint" and self.poisoned != s:
             self.winner = "evil"
@@ -356,6 +362,11 @@ class Game:
             killed = None
             if self.demon in self.alive and self.poisoned != self.demon:
                 t = await self.ask(self.agents[self.demon].kill_pick(self))
+                if self.roles[t] == "mayor" and self.poisoned != t and t != protect:
+                    bounce = self.st.mayor_bounce(self, t, protect)
+                    if bounce is not None:
+                        self.note(M("note_bounce", t=S(t), x=S(bounce)))
+                        t = bounce
                 if t == protect or (self.roles[t] == "soldier" and self.poisoned != t):
                     self.note(M("note_survive", t=S(t)))
                     self.survived.add(t)
@@ -493,6 +504,7 @@ class Game:
                     return
         self._check()
         await self._show_reads()
+        await self._mayor_plea()
         await self._plan_virgin_test()
         self.phase = "nominations"
         await self._nominations()
@@ -757,7 +769,8 @@ class Game:
 
     async def _shoot(self, s, t):
         self.agents[s].slayer_used = True
-        hit = self.roles[s] == "slayer" and self.poisoned != s and t == self.demon
+        demonish = t == self.demon or (self.roles[t] == "recluse" and self.st.helps(self) == "evil")
+        hit = self.roles[s] == "slayer" and self.poisoned != s and demonish
         shot = M("shoot", p=S(s), t=S(t), result=M("shot_dies", t=S(t)) if hit else M("shot_nothing"))
         await self.say(shot, speaker=s)
         await self.beat(M("slayer_title"), shot)
@@ -1062,6 +1075,15 @@ class Game:
                 and agent.profile.name != "novice" and bool(claims) and claims[x] == agent.role
                 and agent.role in SPENT and any(claims[y] == "undertaker" for y in self.alive if y != x))
 
+    async def _mayor_plea(self):
+        """Three alive and a Mayor claim: the Mayor asks the table not to execute anyone."""
+        claims = self.pub.claims or ()
+        if len(self.alive) != 3 or not claims:
+            return
+        for x in self.alive:
+            if claims[x] == "mayor" and x != self.human:
+                await self.speech(x, self.m("mayor_plea"))
+
     async def _plan_virgin_test(self):
         """Someone proposes that a first-night info role nominate the claimed Virgin: one
         nomination tests both of them."""
@@ -1127,7 +1149,9 @@ class Game:
         if t in self.ever_nominated:
             return False
         self.ever_nominated.add(t)
-        triggered = self.roles[t] == "virgin" and self.poisoned != t and KIND[self.roles[s]] == "townsfolk"
+        townsfolk = KIND[self.roles[s]] == "townsfolk" or (
+            self.roles[s] == "spy" and self.roles[t] == "virgin" and self.st.helps(self) == "good")
+        triggered = self.roles[t] == "virgin" and self.poisoned != t and townsfolk
         self.pub = replace(self.pub, first_noms=self.pub.first_noms + (Nomination(self.day, s, t, triggered),))
         if triggered:
             await self.say(M("virgin", a=S(s), t=S(t)))

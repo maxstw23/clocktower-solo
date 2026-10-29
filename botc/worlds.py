@@ -127,26 +127,58 @@ def structures(n, claims, liars=()):
     return result
 
 
-def evaluate(roles, pub, allow_poison=True, allow_misreg=True):
-    """Check one starting assignment against the record; return a World or None."""
+def timelines(roles, pub):
+    """Every way the Demon could have passed from player to player given the deaths: a Demon
+    executed (or shot) passes to the Scarlet Woman when 5+ are alive; a Demon dead at night has
+    star-passed to a Minion (the Scarlet Woman if she's alive, else any living Minion).
+    Each timeline is a list of (tick, new Demon)."""
     n = pub.n
+    out = []
 
-    # Who is the Demon over time: the Imp, then possibly the Scarlet Woman.
-    current = roles.index("imp")
-    sw = roles.index("scarlet_woman") if "scarlet_woman" in roles else None
-    promo_seat = promo_tick = None
-    dead_tick = {}
-    for d in sorted(pub.deaths, key=lambda d: d.tick):
-        if d.seat == current:
-            if d.cause == "night" or promo_seat is not None:
-                return None  # no star-pass in this version; a second Demon death would end the game
-            if sw is None or sw in dead_tick or n - len(dead_tick) < 5:
-                return None  # the game would have ended
-            promo_seat, promo_tick, current = sw, d.tick, sw
-        dead_tick[d.seat] = d.tick
+    def walk(deaths, current, promos, dead):
+        if not deaths:
+            out.append(promos)
+            return
+        d, rest = deaths[0], deaths[1:]
+        if d.seat != current:
+            walk(rest, current, promos, dead | {d.seat})
+            return
+        alive_minions = [s for s in range(n) if KIND[roles[s]] == "minion" and s not in dead and s != d.seat
+                         and all(p[1] != s for p in promos)]
+        sw = [s for s in alive_minions if roles[s] == "scarlet_woman"]
+        if d.cause == "night":
+            heirs = sw or alive_minions  # a star-pass
+        else:
+            heirs = sw if n - len(dead) >= 5 else []  # only the Scarlet Woman catches an executed Demon
+        for h in heirs:
+            walk(rest, h, promos + [(d.tick, h)], dead | {d.seat})
+        # no heir: the game would have ended, so this world can't be ours
+
+    walk(sorted(pub.deaths, key=lambda d: d.tick), roles.index("imp"), [], frozenset())
+    return out
+
+
+def evaluate(roles, pub, allow_poison=True, allow_misreg=True):
+    """Check one starting assignment against the record; return the Worlds that fit (one per way
+    the Demon may have passed on)."""
+    return [w for w in (_evaluate(roles, pub, allow_poison, allow_misreg, t) for t in timelines(roles, pub)) if w]
+
+
+def _evaluate(roles, pub, allow_poison, allow_misreg, promos):
+    n = pub.n
+    dead_tick = {d.seat: d.tick for d in pub.deaths}
+    current = promos[-1][1] if promos else roles.index("imp")
+
+    def demon_at(tick):
+        demon = roles.index("imp")
+        for t, s in promos:
+            # A star-pass (at night) is in effect for whoever wakes later that same night.
+            if tick > t or (tick == t and t % 2 == 1):
+                demon = s
+        return demon
 
     def role_at(s, tick):
-        return "imp" if s == promo_seat and tick > promo_tick else roles[s]
+        return "imp" if s == demon_at(tick) else roles[s]
 
     concrete = {r for r in roles if r not in WILD}
 
@@ -273,7 +305,7 @@ def evaluate(roles, pub, allow_poison=True, allow_misreg=True):
     imp = roles.index("imp")
     for night in range(2, pub.nights + 1):
         tick = night_tick(night)
-        demon = promo_seat if promo_seat is not None and tick > promo_tick else imp
+        demon = demon_at(tick)
         if night in killed_on or dead_tick.get(demon, 10**9) < tick:
             continue
         guards = [s for s in range(n) if dead_tick.get(s, 10**9) >= tick
@@ -282,7 +314,9 @@ def evaluate(roles, pub, allow_poison=True, allow_misreg=True):
             return None
 
     for sh in pub.shots:
-        target = role_at(sh.target, day_tick(sh.day))
+        target = "imp" if demon_at(day_tick(sh.day)) == sh.target else role_at(sh.target, day_tick(sh.day))
+        if target == "imp" and demon_at(day_tick(sh.day)) != sh.target:
+            target = "dead imp"
         if sh.killed:
             if not could_be(sh.shooter, "slayer"):
                 return None
@@ -328,7 +362,7 @@ def evaluate(roles, pub, allow_poison=True, allow_misreg=True):
             for r in ft_reports:
                 a, b, yes = r.data
                 tick = night_tick(r.night)
-                truth = any(role_at(x, tick) == "imp" or x == rh for x in (a, b))
+                truth = any(demon_at(tick) == x or x == rh for x in (a, b))  # the Demon now, not a dead one
                 if yes == truth:
                     continue
                 if yes and allow_misreg and any(role_at(x, tick) == "recluse" for x in (a, b)):
@@ -402,7 +436,7 @@ class Solver:
             candidates = [w.roles for w in self.worlds(self._latest)]
         else:
             candidates = self.structures(pub)
-        result = [w for w in (evaluate(r, pub, allow_poison, allow_misreg) for r in candidates) if w]
+        result = [w for r in dict.fromkeys(candidates) for w in evaluate(r, pub, allow_poison, allow_misreg)]
         if allow_poison and allow_misreg and base is None:
             self._latest = pub
         self._cache[key] = result
