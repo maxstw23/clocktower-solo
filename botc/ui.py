@@ -19,6 +19,17 @@ def pacer(session_speed, lang):
     return pace
 
 
+def pick_seat(players, seed, side):
+    """A seat for the human: on the side they asked for ("good"/"evil"), else any seat."""
+    import random
+    from .engine import Game
+    seats = list(range(players))
+    if side in ("good", "evil"):
+        team = Game(players, seed, out=None).team
+        seats = [s for s in seats if (s in team) == (side == "evil")]
+    return random.Random(f"seat-{seed}").choice(seats)
+
+
 def roles_payload(lang):
     return {"roles": roles_reference(lang), "note": render(M("first_night_note"), lang)}
 

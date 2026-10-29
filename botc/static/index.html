@@ -211,6 +211,8 @@
     <div><label for="players" data-i="players"></label><select id="players"></select></div>
     <div><label for="seat" data-i="yourSeat"></label><select id="seat"></select></div>
   </div>
+  <label for="side" data-i="side"></label>
+  <select id="side"><option value="" data-i="sideAny"></option><option value="good" data-i="sideGood"></option><option value="evil" data-i="sideEvil"></option></select>
   <label for="seedIn" data-i="gameNo"></label>
   <input id="seedIn" inputmode="numeric">
   <label class="check"><input type="checkbox" id="hints"> <span data-i="hints"></span></label>
@@ -257,7 +259,8 @@ const UI = {
     cont: "Continue", nextLine: "Continue ▶", tags: { claim: "claim", claim_change: "new claim", report: "info", suspect: "suspicion", suspect_plain: "suspicion", reply: "defence", defend: "defence", defend_silent: "defence", reply_silent: "defence" },
     newGame: "New game", startTitle: "Trouble Brewing, solo",
     startIntro: "You take one seat; everyone else is an AI player. Each day: introductions, private chats, open discussion, then nominations and votes. Anyone may bluff, even about being evil, but changing your claim in public costs trust. Everything said is kept in your notebook.",
-    yourName: "Your name", players: "Players", yourSeat: "Your seat", gameNo: "Game number (optional, to replay)",
+    yourName: "Your name", players: "Players", yourSeat: "Your seat", side: "Play as",
+    sideAny: "Either side (random)", sideGood: "Good", sideEvil: "Evil", gameNo: "Game number (optional, to replay)",
     hints: "Show me hints (a veteran's read of the suspects)", takeSeat: "Take your seat", back: "Back to the current game",
     story: "Story", notebook: "Notebook", onlyYou: "Only you", characters: "Characters",
     random: "Random", seatN: "Seat {n}", playersN: "{n} players", recommended: " (recommended)", slowN: " (slow)",
@@ -280,7 +283,8 @@ const UI = {
     cont: "继续", nextLine: "继续 ▶", tags: { claim: "报身份", claim_change: "改口", report: "报信息", suspect: "怀疑", suspect_plain: "怀疑", reply: "辩解", defend: "辩解", defend_silent: "辩解", reply_silent: "辩解" },
     newGame: "新游戏", startTitle: "暗流涌动 · 单人游戏",
     startIntro: "你占一个座位，其他玩家都由AI扮演。每天依次是：自我介绍、私聊、公开讨论、提名和投票。任何人都可以伪装，甚至伪装成邪恶角色；但公开改口会让人不信任你。所有发言都会记在你的笔记里。",
-    yourName: "你的名字", players: "玩家人数", yourSeat: "你的座位", gameNo: "局号（可选，用于重玩）",
+    yourName: "你的名字", players: "玩家人数", yourSeat: "你的座位", side: "你想玩",
+    sideAny: "随机阵营", sideGood: "善良", sideEvil: "邪恶", gameNo: "局号（可选，用于重玩）",
     hints: "给我提示（老手对嫌疑人的判断）", takeSeat: "入座", back: "回到当前游戏",
     story: "故事", notebook: "笔记", onlyYou: "仅你可见", characters: "角色",
     random: "随机", seatN: "{n}号座位", playersN: "{n}名玩家", recommended: "（推荐）", slowN: "（较慢）",
@@ -372,7 +376,8 @@ $("startBtn").onclick = async () => {
   const name = $("name").value.trim();
   try { localStorage.setItem("ct-name", name); } catch (e) {}
   const r = await api("/api/new", {
-    name, players: +$("players").value, seat: $("seat").value, seed: $("seedIn").value.trim(), hints: $("hints").checked, lang });
+    name, players: +$("players").value, seat: $("seat").value, seed: $("seedIn").value.trim(), hints: $("hints").checked, lang,
+    side: $("side").value });
   if (!r.ok) { $("startErr").textContent = r.data.error; return; }
   since = 0; promptId = null; picked = []; game = null; lastPhase = null; bubbles = {};
   $("pane-story").innerHTML = ""; $("pane-mine").innerHTML = ""; $("prompt").innerHTML = "";

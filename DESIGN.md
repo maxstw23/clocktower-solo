@@ -61,10 +61,18 @@ shown, so the page can switch language mid-game. Common lines have several phras
 seed. In the browser the game paces itself (a pause before each line, adjustable speed) so players
 speak one at a time; accused players answer back once a day.
 
+**Table talk that resists bluffs.** Some good info roles stay quiet in public on day 1 and only
+confide in private (`quiet_rate`); they come out when nominated, when someone claims their
+character, or by `reveal_day`. Whoever really holds a character calls out a false claim at once
+(coming out of hiding if needed), then pushes to nominate the impostor. A claimed info role that
+hasn't shared past nights' info costs suspicion (`silence_cost`); an Undertaker says so when nobody
+was executed. In AI-only 8-player games this moved good's win rate from about 55% to 63-67%.
+
 **Evil coordination.** Anyone may claim an evil character, publicly or privately (as a good player
 it reads as a costly bluff). In a private chat among the evil team, AI teammates state their real
 character and plan ("I'll poison X tonight"); an evil human can suggest tonight's kill or poison
-target and the AI follows it.
+target and the AI follows it. A human Minion gets one of the Demon's bluffs, handed over by the
+Demon in a private chat that the evil team holds first on day 1. The start screen can pick a side.
 
 **Worlds and excuses.** A world is a starting role assignment. Records that contradict a sober
 good player need an *excuse*: a poisoning (at most one per night, Poisoner alive), a Spy/Recluse

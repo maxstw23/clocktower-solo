@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 from .engine import Game
 from .human import GameAborted, WebIO
 from .i18n import LANGS
-from .ui import SPEEDS, pacer, roles_payload, snapshot
+from .ui import SPEEDS, pacer, pick_seat, roles_payload, snapshot
 
 PAGE = Path(__file__).with_name("static") / "index.html"
 
@@ -29,13 +29,13 @@ class Session:
         self.speed = "normal"
         self.lock = threading.Lock()
 
-    def start(self, name, players, seed, seat, hints, lang):
+    def start(self, name, players, seed, seat, hints, lang, side=None):
         with self.lock:
             if self.io:
                 self.io.abort()
             seed = seed if seed is not None else random.randrange(10**6)
             if seat is None:
-                seat = random.Random(f"seat-{seed}").randrange(players)
+                seat = pick_seat(players, seed, side)
             io = WebIO()
             game = Game(players, seed, out=None, human=seat, io=io, hints=hints, name=name or None,
                         lang=lang, pace=pacer(lambda: self.speed, lang),
@@ -104,7 +104,7 @@ def make_handler(session):
                         raise ValueError("seat out of range")
                     lang = body.get("lang") if body.get("lang") in LANGS else "en"
                     session.start(str(body.get("name", ""))[:20].strip(), players, seed, seat,
-                                  bool(body.get("hints")), lang)
+                                  bool(body.get("hints")), lang, body.get("side"))
                 except ValueError as e:
                     return self._send(400, {"error": str(e)})
                 return self._send(200, {"ok": True})

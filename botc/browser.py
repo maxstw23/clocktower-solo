@@ -12,7 +12,7 @@ import traceback
 from .engine import Game
 from .human import GameAborted, WebIO
 from .i18n import LANGS
-from .ui import SPEEDS, pacer, roles_payload, snapshot
+from .ui import SPEEDS, pacer, pick_seat, roles_payload, snapshot
 
 
 class BrowserSession:
@@ -21,12 +21,12 @@ class BrowserSession:
         self.error = None
         self.speed = "normal"
 
-    def start(self, name, players, seed, seat, hints, lang):
+    def start(self, name, players, seed, seat, hints, lang, side=None):
         if self.io:
             self.io.abort()
         seed = seed if seed is not None else random.randrange(10**6)
         if seat is None:
-            seat = random.Random(f"seat-{seed}").randrange(players)
+            seat = pick_seat(players, seed, side)
         self.io = WebIO()
         self.game = Game(players, seed, out=None, human=seat, io=self.io, hints=hints, name=name or None,
                          lang=lang, pace=pacer(lambda: self.speed, lang),
@@ -63,7 +63,7 @@ def handle(path, query_json, body_json):
             if seat is not None and not 0 <= seat < players:
                 raise ValueError("seat out of range")
             session.start(str(body.get("name", ""))[:20].strip(), players, seed, seat, bool(body.get("hints")),
-                          body.get("lang") if body.get("lang") in LANGS else "en")
+                          body.get("lang") if body.get("lang") in LANGS else "en", body.get("side"))
         except ValueError as e:
             return [400, json.dumps({"error": str(e)})]
         return [200, json.dumps({"ok": True})]

@@ -52,6 +52,7 @@ class Game:
         self.log = []          # every line said, in order: dicts with m, private, chat, speaker
         self.suggest = {}      # evil human's suggestions to AI teammates: "kill"/"poison" -> seat
         self.replied = set()   # (day, seat): already answered an accusation today
+        self.countered = set()  # (real holder, false claimer): already called out
         self.whispers = []     # everything said in private groups
         self.claim_seq = {}    # seat -> order number of their latest public claim
         self._seq = 0
@@ -106,8 +107,13 @@ class Game:
         # What each player intends to claim on day 1 (also the Storyteller's forecast).
         claims = [a.cover or a.role if s not in self.team else None for s, a in enumerate(self.agents)]
         bluffs = sorted(self.bluffs, key=BLUFF_ORDER.index)
+        self.human_bluff = None  # a bluff the Demon will hand a human Minion
+        self.bluff_given = False
+        if self.human in self.team and self.human != self.demon and len(bluffs) > 1:
+            self.human_bluff = bluffs.pop(1)
+            claims[self.human] = self.human_bluff
         # The evil team settles its bluffs on night one; the Demon picks first.
-        for s in sorted(self.team, key=lambda s: s != self.demon):
+        for s in sorted(self.team - {self.human} if self.human_bluff else self.team, key=lambda s: s != self.demon):
             claims[s] = bluffs.pop(0) if bluffs else rng.choice([r for r in TOWNSFOLK if r not in claims])
         self.planned_claims = tuple(claims)
         if self.human is not None:
@@ -236,6 +242,13 @@ class Game:
 
     def executed_on(self, day):
         return next((d.seat for d in self.pub.deaths if d.cause == "execution" and d.tick == day_tick(day)), None)
+
+    def silent_nights(self, s):
+        """Past nights of info that s's public character should have given them, still unshared."""
+        claims = self.known.claims
+        if not claims or claims[s] is None or s in self.dead:
+            return []
+        return [n for n in self._info_nights(s, claims[s]) if n < self.night]
 
     @property
     def pending(self):
@@ -487,6 +500,23 @@ class Game:
             await self.speech(s, self.m("claim", role=R(role)))
         else:
             await self.speech(s, self.m("claim_change", old=R(before), new=R(role)))
+        await self._counterclaim(s, role)
+
+    async def _counterclaim(self, s, role):
+        """Whoever really has `role` (or believes so) calls out a false claim straight away."""
+        for x in range(self.n):
+            agent = self.agents[x]
+            if x in (s, self.human) or x in self.team or x in self.dead or getattr(agent, "role", None) != role:
+                continue
+            if (x, s) in self.countered:
+                continue
+            self.countered.add((x, s))
+            if self.pub.claims[x] != role:
+                await self._claim(x, role)  # come out of hiding to contest it
+            if agent.inbox:
+                await self._publish(*sorted(agent.inbox, key=lambda r: r.night))
+                agent.inbox.clear()
+            await self.speech(x, self.m("counter", t=S(s), role=R(role)))
 
     async def _publish(self, *reports):
         self.pub = self.pub.plus(*reports)
@@ -520,6 +550,11 @@ class Game:
     async def _private_chats(self, order):
         """Players step aside in small groups. Each player is in at most one group a day."""
         self.phase = "private chats"
+        if self.day == 1 and self.human in self.team:
+            # The evil team meets first: an AI teammate (the Demon if it can) takes the human aside.
+            mates = sorted(self.team - {self.human}, key=lambda s: s != self.demon)
+            if mates:
+                order = [mates[0]] + [s for s in order if s != mates[0]]
         await self.say(M("phase_chats"))
         await self.beat(M("phase_chats_title"), M("phase_chats_body"))
         busy = set()
@@ -574,6 +609,9 @@ class Game:
                     await self._whisper(s, group, text=M("e_poison", t=S(agent.poison_pick(self))))
                 elif s == self.demon and self.day >= 1:
                     await self._whisper(s, group, text=M("e_kill", t=S(agent.kill_pick(self))))
+                if s == self.demon and self.human in mates and self.human_bluff and not self.bluff_given:
+                    self.bluff_given = True
+                    await self._whisper(s, group, text=M("e_bluff_for_you", role=R(self.human_bluff)))
                 continue
             public = self.pub.claims[s] if self.pub.claims else None
             if s in self.team and public is None:
@@ -642,6 +680,7 @@ class Game:
         if s == self.human:
             return await self._human_turn()
         agent = self.agents[s]
+        await self._nothing_to_report(s)
         if s in self.team:
             if not self.pub.claims or self.pub.claims[s] is None:
                 await self._claim(s, self.planned_claims[s])
@@ -654,9 +693,9 @@ class Game:
             role = agent.claim_now(self)
             if role:
                 await self._claim(s, role)
-            elif not self.pub.claims or self.pub.claims[s] is None:
-                await self._claim(s, agent.cover or agent.role)
-            if self.pub.claims[s] == agent.role and agent.inbox:
+            elif (not self.pub.claims or self.pub.claims[s] is None) and s not in self.dead:
+                await self.speech(s, self.m("stay_quiet"))
+            if self.pub.claims and self.pub.claims[s] == agent.role and agent.inbox:
                 await self._publish(*sorted(agent.inbox, key=lambda r: r.night))
                 agent.inbox.clear()
             if s not in self.dead and self.perceived[s] == "slayer" and not agent.slayer_used:
@@ -678,6 +717,13 @@ class Game:
         self.replied.add((self.day, t))
         claim = self.pub.claims[t] if self.pub.claims else None
         await self.speech(t, self.m("reply", role=R(claim)) if claim else M("reply_silent"))
+
+    async def _nothing_to_report(self, s):
+        """A claimed Undertaker says so when nobody was executed yesterday."""
+        claims = self.pub.claims
+        if claims and claims[s] == "undertaker" and self.day >= 2 and s not in self.dead \
+                and self.executed_on(self.day - 1) is None:
+            await self.speech(s, M("no_exec_info"))
 
     async def _shoot(self, s, t):
         self.agents[s].slayer_used = True
@@ -752,10 +798,11 @@ class Game:
         io = self.agents[h].io
         mine = [self.perceived[h]] if h not in self.team else ([self.roles[h]] if group and any(
             x in self.team and x != h for x in group) else [])
-        bluffs = self.bluffs if h == self.demon else []
+        bluffs = self.bluffs if h == self.demon else [self.human_bluff] if self.bluff_given else []
         first = mine + [b for b in bluffs if b not in mine]
         roles = first + [r for r in ALL_ROLES if r not in first and r != "drunk"]
-        labels = [M("lbl_yours" if r in mine else "lbl_bluff" if r in bluffs else "lbl_evil" if is_evil(r)
+        bluff_label = "lbl_bluff" if h == self.demon else "lbl_given"
+        labels = [M("lbl_yours" if r in mine else bluff_label if r in bluffs else "lbl_evil" if is_evil(r)
                     else "lbl_role", role=R(r)) for r in roles]
         role = roles[await io.choose(M("q_which_char"), labels, default=0)]
         if group:
@@ -931,10 +978,10 @@ class Game:
             role = agent.claim_now(self, pressed=True)
             if role:
                 await self._claim(t, role)
-            if self.pub.claims[t] == agent.role and agent.inbox:
+            if self.pub.claims and self.pub.claims[t] == agent.role and agent.inbox:
                 await self._publish(*sorted(agent.inbox, key=lambda r: r.night))
                 agent.inbox.clear()
-        claim = self.pub.claims[t]
+        claim = self.pub.claims[t] if self.pub.claims else None
         await self.speech(t, self.m("defend", role=R(claim)) if claim else M("defend_silent"))
 
     async def _virgin(self, s, t):

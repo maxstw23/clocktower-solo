@@ -43,6 +43,8 @@ class Profile:
     hide_rate: float = 0.15  # good only: chance a fragile info role hides behind a cover claim on day 1
     reveal_day: int = 2      # good only: a hidden player comes out by this day (or earlier if pressed)
     speak_at: int = 25       # suspicion needed to say out loud whom they suspect
+    quiet_rate: float = 0.25  # good only: chance an info role keeps their character to private chats on day 1
+    silence_cost: int = 15   # suspicion per night of info a claimed info role should have shared but didn't
     confide_at: int = 30     # good only: talk privately with (and confide in) players below this suspicion
 
 
@@ -51,11 +53,11 @@ PROFILES = {
                       considers_misregistration=False, max_excuses=0,
                       nominate_at=30, vote_at=25, bandwagon=6, saint_caution=10, lookahead=1,
                       ft_split=False, vote_memory=5, story_check=0, considers_bluffs=False, hide_rate=0,
-                      confide_at=40),
+                      confide_at=40, quiet_rate=0, silence_cost=8),
     "regular": Profile("regular", considers_misregistration=False, max_excuses=1),
     "veteran": Profile("veteran", max_excuses=3, nominate_at=40, vote_at=35, bandwagon=1, lookahead=6,
                        tests_virgin=True, vote_memory=20, story_check=2, hide_rate=0.3, reveal_day=3,
-                       confide_at=20),
+                       confide_at=20, quiet_rate=0.35, silence_cost=20),
 }
 # How "the town" reads the record; used by the Storyteller.
 REFERENCE = Profile("reference")
@@ -122,6 +124,10 @@ class Agent:
             return M("r_silent")
         if is_evil(claim):
             return M("r_evilclaim", role=R(claim))
+        if claim == getattr(self, "role", None) and target != self.seat:
+            return M("r_counter", role=R(claim))
+        if game.silent_nights(target):
+            return M("r_noinfo", role=R(claim))
         twins = [s for s, c in enumerate(pub.claims) if s != target and c == claim]
         if twins:
             return M("r_twin", x=S(twins[0]), role=R(claim))
@@ -159,11 +165,15 @@ class GoodAgent(Agent):
         self.cover = None
         if role in FRAGILE and rng.random() < profile.hide_rate:
             self.cover = rng.choice([c for c in COVERS if c != role])
+        # Some info roles keep their character to private chats at first, rather than bluff.
+        self.quiet = self.cover is None and VALUE.get(role, 0) >= 2 and rng.random() < profile.quiet_rate
 
     def claim_now(self, game, pressed=False):
-        """The claim to make now, or None to leave it as it is."""
+        """The claim to make now, or None to leave it as it is (or to stay silent)."""
         current = game.pub.claims[self.seat] if game.pub.claims else None
         if current is None:
+            if self.quiet and not self.should_reveal(game, pressed):
+                return None
             return self.cover or self.role
         if current != self.role and self.should_reveal(game, pressed):
             return self.role
@@ -173,7 +183,12 @@ class GoodAgent(Agent):
         if pressed or game.day >= self.profile.reveal_day or len(game.alive) <= 5:
             return True
         # Someone else claims my real role (or my cover): time to come out.
-        return any(c in (self.role, self.cover) for s, c in enumerate(game.pub.claims) if s != self.seat)
+        return any(c in (self.role, self.cover) for s, c in enumerate(game.pub.claims or ()) if s != self.seat)
+
+    def impostors(self, game):
+        """Players publicly claiming my own character: I know they're lying (unless I'm the Drunk)."""
+        claims = game.pub.claims or ()
+        return [s for s, c in enumerate(claims) if c == self.role and s != self.seat and s in game.alive]
 
     def invite(self, game, free):
         """Whom to talk to privately: the players they trust most (two if they are hiding something)."""
@@ -190,6 +205,9 @@ class GoodAgent(Agent):
         cands = [s for s in game.alive if s != self.seat]
         if self.seat in game.dead or not cands or not game.pub.claims:
             return None
+        if self.impostors(game) and game.pub.claims[self.seat] == self.role:
+            top = self.impostors(game)[0]
+            return top, M("r_counter", role=R(self.role))
         top = self.rank(cands, lambda s: -self.suspicion(game, s))[0]
         if self.suspicion(game, top) < self.profile.speak_at:
             return None
@@ -231,6 +249,9 @@ class GoodAgent(Agent):
             if v.nominee != s and game.executed_on(v.day) == v.nominee and b.evil_pct(v.nominee) < 30 \
                     and (s == v.nominator or s in v.voters):
                 grudge += self.profile.vote_memory
+        if s in self.impostors(game):
+            grudge += 60  # they claim my character
+        grudge += self.profile.silence_cost * len(game.silent_nights(s))
         return min(100, b.suspicion(s) + grudge)
 
     def nominate(self, game, nominated):
@@ -242,6 +263,9 @@ class GoodAgent(Agent):
         cands = [s for s in game.alive if s != self.seat and s not in nominated]
         if not cands:
             return None
+        fakes = [s for s in self.impostors(game) if s in cands]
+        if fakes and game.pub.claims[self.seat] == self.role:
+            return fakes[0]  # call out whoever claims my character
         top = self.rank(cands, lambda s: -self.suspicion(game, s))[0]
         return top if self.suspicion(game, top) >= self.threshold(self.profile.nominate_at, game) else None
 

@@ -162,6 +162,54 @@ def test_evil_human_can_steer_the_kill():
     raise AssertionError("no seed with an evil minion seat")
 
 
+class _Scripted(TerminalIO):
+    """Accept invitations, claim a chosen character, otherwise take defaults; record what is offered."""
+    def __init__(self, claim=None):
+        super().__init__(out=lambda m: None)
+        self.claim, self.offered = claim, []
+    def choose(self, prompt, labels, default=0):
+        if prompt.key == "q_which_char":
+            self.offered = [l.key for l in labels]
+            if self.claim:
+                return next(i for i, l in enumerate(labels) if l.args["role"].role == self.claim)
+        return default
+    def seat(self, prompt, seats, default=None):
+        return default
+    def seats(self, prompt, seats, k, default):
+        return list(default)
+    def yes_no(self, prompt, default=False):
+        return prompt.key == "q_accept"
+
+
+def test_demon_briefs_a_human_minion_on_day_one():
+    for seed in range(30):
+        probe = Game(8, seed, out=None)
+        minion = next(s for s in probe.team if s != probe.demon)
+        io = _Scripted()
+        g = Game(8, seed, out=None, human=minion, io=io)
+        g.play()
+        day1 = [e for e in g.log if e["chat"] and e["m"].key == "speech"
+                and e["m"].args["text"].key == "e_bluff_for_you"]
+        assert day1, f"seed {seed}: no bluff handed over"
+        assert g.human_bluff and g.human_bluff not in [g.planned_claims[s] for s in g.team if s != minion]
+    assert "lbl_given" in io.offered
+
+
+def test_real_holder_calls_out_a_false_claim():
+    called = 0
+    for seed in range(20):
+        probe = Game(8, seed, out=None)
+        holders = {probe.perceived[s]: s for s in range(8) if s not in probe.team and probe.roles[s] != "drunk"}
+        me = next(s for s in range(8) if s not in probe.team and probe.roles[s] != "drunk")
+        stolen = next(r for r, s in holders.items() if s != me)
+        g = Game(8, seed, out=None, human=me, io=_Scripted(claim=stolen))
+        g.play()
+        counters = [e for e in g.log if e["m"].key == "speech" and e["m"].args["text"].key == "counter"
+                    and e["m"].args["text"].args["t"].seat == me]
+        called += bool(counters)
+    assert called >= 15, called
+
+
 def test_empath_zero_clears_neighbours():
     # 7 players: 5 townsfolk, 0 outsiders, 1 minion, 1 imp
     claims = ("empath", "chef", "monk", "slayer", "soldier", "virgin", "mayor")
