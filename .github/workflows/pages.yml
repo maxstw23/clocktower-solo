@@ -28,7 +28,9 @@ jobs:
         with:
           python-version: "3.13"
       - run: python tests/test_core.py
-      - run: python build_web.py --out dist
+      - name: Bundle Pyodide, so playing needs no CDN
+        run: curl -sL https://registry.npmjs.org/pyodide/-/pyodide-0.29.5.tgz | tar xz
+      - run: python build_web.py --out dist --pyodide package
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
