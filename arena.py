@@ -46,7 +46,7 @@ def main():
                                            not (d == g.day and g.winner))
         c["endgame_ties"] += sum(1 for e in said(g, "votes_tie")
                                  if g.n - sum(d.tick < 2 * e["day"] for d in g.pub.deaths) <= 4)
-        c["virgin_plans"] += len(said(g, "virgin_plan"))
+        c["virgin_plans"] += len(said(g, "virgin_plan")) + len(said(g, "virgin_plan_self"))
         c["virgin_tests"] += len(said(g, "nominates_test"))
         c["virgin_triggered"] += sum(fn.triggered for fn in g.pub.first_noms)
         c["virgin_deflected"] += len(said(g, "virgin_deflect"))
@@ -55,6 +55,7 @@ def main():
         c["offers_taken"] += len(said(g, "nominates_self")) + len(said(g, "nominates_offer"))
         c["counterclaims"] += len(said(g, "counter"))
         c["quiet"] += len(said(g, "stay_quiet"))
+        c["mayor_wins"] += len(said(g, "mayor_win"))
         if args.show == i:
             for e in g.log:
                 tag = "【私聊】" if e["chat"] else "【仅我】" if e["private"] else ""
@@ -68,7 +69,7 @@ def main():
     print(f"  endgame ties {c['endgame_ties']}; counterclaims {c['counterclaims']}; quiet claims {c['quiet']}")
     print(f"  Virgin: proposed {c['virgin_plans']}, tested {c['virgin_tests']}, triggered {c['virgin_triggered']}, "
           f"deflected by evil {c['virgin_deflected']}, smeared {c['virgin_smeared']}")
-    print(f"  offers to be executed {c['offers']}, taken up {c['offers_taken']}")
+    print(f"  offers to be executed {c['offers']}, taken up {c['offers_taken']}; Mayor wins {c['mayor_wins']}")
 
 
 if __name__ == "__main__":

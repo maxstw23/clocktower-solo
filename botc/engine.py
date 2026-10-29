@@ -1046,7 +1046,7 @@ class Game:
     async def _after_failed_test(self, tester, virgin):
         """The Virgin test did nothing: both sides explain what that means."""
         if virgin != self.human and virgin not in self.team and self.perceived[virgin] == "virgin":
-            await self.speech(virgin, self.m("virgin_dud"))  # thinks they're the Virgin: drunk or poisoned?
+            await self.speech(virgin, self.m("virgin_dud", t=S(tester)))  # the tester, or am I drunk/poisoned?
         if tester == self.human:
             return
         if tester in self.team:
@@ -1084,17 +1084,23 @@ class Game:
         self.virgin_planned.add(v)
         agent = self.agents[p]
         t = min(testers, key=lambda x: (agent.suspicion(self, x) if x != p else 0, agent.bias[x]))
+        if t == p:  # the proposer is the best tester: they go themself
+            await self.speech(p, M("virgin_plan_self", vg=S(v)))
+            self.virgin_plan = (p, v)
+            return
         await self.speech(p, M("virgin_plan", vg=S(v), t=S(t)))
         if t == self.human:
             if await self.agents[t].io.yes_no(M("q_virgin_test", vg=S(v))):
                 await self.speech(t, M("virgin_ok"))
                 self.virgin_plan = (t, v)
             return
-        others = [x for x in testers if x not in (t, self.human) and x not in self.team]
+        others = [x for x in testers if x != t and x not in self.team]
         if t in self.team and self.agents[t].profile.name != "novice" and others:
             # An evil "Townsfolk" would not trigger the Virgin: steer the test to someone else.
             alt = others[0]
             await self.speech(t, M("virgin_deflect", t=S(alt)))
+            if alt == self.human and not await self.agents[alt].io.yes_no(M("q_virgin_test", vg=S(v))):
+                return
             await self.speech(alt, M("virgin_ok"))
             self.virgin_plan = (alt, v)
             return

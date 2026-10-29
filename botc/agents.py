@@ -254,7 +254,17 @@ class GoodAgent(Agent):
         grudge += self.profile.silence_cost * len(game.silent_nights(s))
         return min(100, b.suspicion(s) + grudge)
 
+    def trusts_mayor(self, game):
+        """Three alive and a Mayor claim I believe: no execution today wins the game for good."""
+        claims = game.pub.claims or ()
+        if len(game.alive) != 3:
+            return False
+        mayors = [s for s in game.alive if claims[s] == "mayor"]
+        return any(s == self.seat and self.role == "mayor" or self.suspicion(game, s) < 40 for s in mayors)
+
     def nominate(self, game, nominated):
+        if self.trusts_mayor(game):
+            return None
         cands = [s for s in game.alive if s != self.seat and s not in nominated]
         if KIND[self.role] == "townsfolk":
             # Nominating a claimed Virgin as a Townsfolk gets you executed if they're real.
@@ -274,7 +284,7 @@ class GoodAgent(Agent):
 
     def vote(self, game, nominee, yes, needed, block, ghost):
         """Yes if suspicious enough and clearly more suspicious than whoever is already on the block."""
-        if nominee == self.seat:
+        if nominee == self.seat or self.trusts_mayor(game):
             return False
         endgame = len(game.alive) <= 4
         sus = self.suspicion(game, nominee)
@@ -292,7 +302,8 @@ class GoodAgent(Agent):
         if game.pub.claims and game.pub.claims[nominee] == "saint":
             t = max(t + self.profile.saint_caution, 70 if endgame else 0)
         if ghost:
-            t = max(t, self.profile.ghost_vote_at)
+            # Dead players keep their one vote for the decisive days, unless they are nearly sure.
+            t = max(t, self.profile.ghost_vote_at if endgame else 85)
         return sus >= t
 
 
