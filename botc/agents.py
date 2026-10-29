@@ -255,11 +255,6 @@ class GoodAgent(Agent):
         return min(100, b.suspicion(s) + grudge)
 
     def nominate(self, game, nominated):
-        if self.profile.tests_virgin and game.day == 1 and KIND[self.role] == "townsfolk" and self.role in SPENT:
-            virgins = [s for s in game.alive if game.pub.claims[s] == "virgin" and s != self.seat
-                       and s not in game.ever_nominated]
-            if virgins:
-                return virgins[0]
         cands = [s for s in game.alive if s != self.seat and s not in nominated]
         if KIND[self.role] == "townsfolk":
             # Nominating a claimed Virgin as a Townsfolk gets you executed if they're real.
@@ -290,6 +285,9 @@ class GoodAgent(Agent):
             return not others or max(others) < self.threshold(self.profile.nominate_at, game)
         if block is not None and sus <= self.suspicion(game, block) + (20 if endgame else 5):
             return False
+        if block is not None and yes + 1 + game.votes_left < needed \
+                and self.suspicion(game, block) >= self.threshold(self.profile.vote_at, game):
+            return False  # this vote can at best tie, which would save the player on the block
         t = self.threshold(self.profile.vote_at, game) - self.profile.bandwagon * yes
         if game.pub.claims and game.pub.claims[nominee] == "saint":
             t = max(t + self.profile.saint_caution, 70 if endgame else 0)

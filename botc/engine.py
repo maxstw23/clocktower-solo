@@ -58,6 +58,7 @@ class Game:
         self.virgin_planned = set()  # claimed Virgins someone already proposed testing
         self.offers = []           # players who offered today to be executed if there's no better choice
         self.offered_ever = set()  # an AI player makes that offer once per game
+        self.votes_left = 0        # during a vote: how many hands are still to come
         self.volunteer = None      # whose offer was taken up
         self.whispers = []     # everything said in private groups
         self.claim_seq = {}    # seat -> order number of their latest public claim
@@ -689,6 +690,14 @@ class Game:
     async def _react(self, s):
         if s == self.human:
             return await self._human_turn(react=True)
+        agent = self.agents[s]
+        if s not in self.team and s not in self.dead:
+            role = agent.claim_now(self)  # e.g. someone has just claimed my cover or my character
+            if role:
+                await self._claim(s, role)
+                if agent.inbox:
+                    await self._publish(*sorted(agent.inbox, key=lambda r: r.night))
+                    agent.inbox.clear()
         await self._offer(s)
         said = self.agents[s].statement(self)
         if said:
@@ -762,6 +771,7 @@ class Game:
         agent = self.agents[s]
         base = self.pub
         options = [Report(s, night, kind, d) for d in self._fake_options(s, kind, night)]
+        options = [r for r in options if not self._implicates_team(r)] or options
         random.Random(f"lie-{self.seed}-{night}-{s}").shuffle(options)
         # Keeping a lie straight is a skill: drop lies that would break the liar's story, judged
         # against their own earlier claims (regular) or the whole record (veteran).
@@ -871,6 +881,15 @@ class Game:
             return
         agent.inbox = [r for r in agent.inbox if not (r.kind == kind and r.night == night)]
         await self._publish(report)
+
+    def _implicates_team(self, r):
+        """A lie that would point at the liar's own teammates."""
+        d = r.data
+        if r.kind in ("investigator", "fortune_teller") and d[0] is not None:
+            return (r.kind == "investigator" or d[2]) and any(x in self.team for x in d[:2])
+        if r.kind in ("undertaker", "ravenkeeper"):
+            return d[0] in self.team and is_evil(d[1])
+        return False
 
     def _story_cost(self, s, pub, base=None):
         """Fewest excuses under which `s` could be the sober good player they claim to be."""
@@ -1051,9 +1070,13 @@ class Game:
                    and x not in self.virgin_planned]
         if not virgins:
             return
-        v = virgins[0]
-        planners = [x for x in self.alive if x not in self.team and x not in (self.human, v)
+        planners = [x for x in self.alive if x not in self.team and x != self.human
                     and self.agents[x].profile.name != "novice"]
+        if not planners:
+            return
+        # Test the claimed Virgin the proposer doubts most (two may claim it).
+        v = max(virgins, key=lambda x: (self.agents[planners[0]].suspicion(self, x), -x))
+        planners = [x for x in planners if x != v]
         testers = [x for x in self.alive if x != v and claims[x] in SPENT]
         if not planners or not testers:
             return
@@ -1109,13 +1132,15 @@ class Game:
 
     async def _vote(self, t, needed, block):
         voters = []
-        for i in range(1, self.n + 1):
-            v = (t + i) % self.n
+        order = [(t + i) % self.n for i in range(1, self.n + 1)]
+        can_vote = [v for v in order if v not in self.dead or v not in self.ghosts_used]
+        for v in order:
             ghost = v in self.dead
             if ghost and v in self.ghosts_used:
                 continue
             if self.roles[v] == "butler" and not ghost and self.butler_master not in voters:
                 continue
+            self.votes_left = len(can_vote) - can_vote.index(v) - 1  # hands still to come after this one
             if await self.ask(self.agents[v].vote(self, t, len(voters), needed, block, ghost)):
                 voters.append(v)
                 if ghost:
