@@ -12,7 +12,7 @@ import traceback
 from .engine import Game
 from .human import GameAborted, WebIO
 from .i18n import LANGS
-from .ui import SPEEDS, WAIT, roles_payload, snapshot
+from .ui import SPEEDS, pacer, roles_payload, snapshot
 
 
 class BrowserSession:
@@ -20,9 +20,6 @@ class BrowserSession:
         self.game = self.io = self.task = None
         self.error = None
         self.speed = "normal"
-
-    def pace(self, kind):
-        return WAIT[kind] * SPEEDS[self.speed]
 
     def start(self, name, players, seed, seat, hints, lang):
         if self.io:
@@ -32,7 +29,8 @@ class BrowserSession:
             seat = random.Random(f"seat-{seed}").randrange(players)
         self.io = WebIO()
         self.game = Game(players, seed, out=None, human=seat, io=self.io, hints=hints, name=name or None,
-                         lang=lang, pace=self.pace)
+                         lang=lang, pace=pacer(lambda: self.speed, lang),
+                        step=lambda: self.speed == "step")
         self.error = None
         self.task = asyncio.ensure_future(self._run(self.game))
 

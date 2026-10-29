@@ -77,6 +77,28 @@
   #banner div { background: color-mix(in srgb, var(--night) 88%, transparent); color: #f2e9d0; font-size: 30px; font-weight: 700; padding: 18px 36px; border-radius: 14px; letter-spacing: 1px; opacity: 0; transition: opacity .6s; }
   #banner.show div { opacity: 1; }
 
+  /* moments: event cards, the ticker, line tags */
+  #card { position: fixed; inset: 0; z-index: 25; display: flex; align-items: center; justify-content: center; padding: 16px;
+          padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+          background: color-mix(in srgb, var(--night) 45%, transparent); }
+  #card .box { width: min(460px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px 22px 18px;
+               box-shadow: 0 18px 50px rgba(0,0,0,.25); text-align: center; animation: rise .3s ease-out; }
+  #card.night .box { background: var(--night); color: #f2e9d0; border-color: color-mix(in srgb, var(--night) 70%, #fff); }
+  #card h2 { margin: 0 0 8px; font-size: 26px; letter-spacing: .5px; text-wrap: balance; }
+  #card p { margin: 0 0 16px; font-size: 16px; line-height: 1.6; }
+  #card .bar { height: 3px; background: color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 3px; overflow: hidden; margin-bottom: 14px; }
+  #card .bar div { height: 100%; width: 100%; background: var(--gold); transform-origin: left; }
+  #card button { min-width: 140px; min-height: 44px; }
+  @keyframes rise { from { transform: translateY(12px); opacity: 0; } }
+  #ticker { min-height: 0; margin: 0 auto 10px; max-width: 640px; text-align: center; font-weight: 650; padding: 8px 12px; border-radius: 10px;
+            background: color-mix(in srgb, var(--accent) 10%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); }
+  .tag2 { display: inline-block; font-size: 11px; font-weight: 650; padding: 0 6px; border-radius: 6px; margin-right: 6px; vertical-align: 1px;
+          border: 1px solid var(--line); color: var(--muted); }
+  .tag2.info { color: var(--good); border-color: var(--good); }
+  .tag2.claim { color: var(--gold); border-color: var(--gold); }
+  .tag2.suspect { color: var(--evil); border-color: var(--evil); }
+  .line.info-line { background: color-mix(in srgb, var(--good) 7%, transparent); border-radius: 4px; padding: 4px 6px; }
+
   /* prompt */
   #prompt { margin-top: 14px; min-height: 96px; }
   #prompt .q { font-weight: 650; margin-bottom: 10px; }
@@ -173,8 +195,8 @@
   <span class="spacer"></span>
   <label id="speedBox" hidden><span data-i="speed"></span>
     <select id="speed">
-      <option value="slow" data-i="slow"></option><option value="normal" data-i="normal"></option>
-      <option value="fast" data-i="fast"></option><option value="instant" data-i="instant"></option>
+      <option value="step" data-i="step"></option><option value="slow" data-i="slow"></option>
+      <option value="normal" data-i="normal"></option><option value="fast" data-i="fast"></option>
     </select></label>
   <span class="seg" id="langSeg"><button data-lang="en">EN</button><button data-lang="zh">中文</button></span>
   <button id="newBtn" hidden data-i="newGame"></button>
@@ -201,6 +223,7 @@
 
 <main id="game" hidden>
   <div id="tableWrap">
+    <div id="ticker" hidden></div>
     <div id="table"><div id="center"></div></div>
     <div id="banner"><div></div></div>
     <div id="prompt" class="card"></div>
@@ -222,13 +245,16 @@
   </div>
 </main>
 <div id="modal" hidden></div>
+<div id="card" hidden><div class="box"><h2 id="cardTitle"></h2><p id="cardText"></p><div class="bar"><div id="cardBar"></div></div>
+  <button class="primary" id="cardBtn"></button></div></div>
 <div id="loading" hidden><div class="card"><span class="dots"><span></span><span></span><span></span></span>
   <span data-i="loading"></span></div></div>
 
 <script>
 const UI = {
   en: {
-    title: "Clocktower Solo", speed: "Speed ", slow: "Slow", normal: "Normal", fast: "Fast", instant: "Instant",
+    title: "Clocktower Solo", speed: "Speed ", step: "Step by step", slow: "Slow", normal: "Normal", fast: "Fast",
+    cont: "Continue", nextLine: "Continue ▶", tags: { claim: "claim", claim_change: "new claim", report: "info", suspect: "suspicion", suspect_plain: "suspicion", reply: "defence", defend: "defence", defend_silent: "defence", reply_silent: "defence" },
     newGame: "New game", startTitle: "Trouble Brewing, solo",
     startIntro: "You take one seat; everyone else is an AI player. Each day: introductions, private chats, open discussion, then nominations and votes. Anyone may bluff, even about being evil, but changing your claim in public costs trust. Everything said is kept in your notebook.",
     yourName: "Your name", players: "Players", yourSeat: "Your seat", gameNo: "Game number (optional, to replay)",
@@ -250,7 +276,8 @@ const UI = {
     engineFailed: "The game engine couldn't start in this browser.",
   },
   zh: {
-    title: "血染钟楼 · 单人版", speed: "速度 ", slow: "慢", normal: "正常", fast: "快", instant: "立即",
+    title: "血染钟楼 · 单人版", speed: "速度 ", step: "逐句", slow: "慢", normal: "正常", fast: "快",
+    cont: "继续", nextLine: "继续 ▶", tags: { claim: "报身份", claim_change: "改口", report: "报信息", suspect: "怀疑", suspect_plain: "怀疑", reply: "辩解", defend: "辩解", defend_silent: "辩解", reply_silent: "辩解" },
     newGame: "新游戏", startTitle: "暗流涌动 · 单人游戏",
     startIntro: "你占一个座位，其他玩家都由AI扮演。每天依次是：自我介绍、私聊、公开讨论、提名和投票。任何人都可以伪装，甚至伪装成邪恶角色；但公开改口会让人不信任你。所有发言都会记在你的笔记里。",
     yourName: "你的名字", players: "玩家人数", yourSeat: "你的座位", gameNo: "局号（可选，用于重玩）",
@@ -380,7 +407,7 @@ function render(g) {
   rc.className = "card" + (g.evil ? " evil" : "");
   rc.innerHTML = `<div><span class="rname">${esc(g.role)}</span><span class="rkind">${esc(g.kind_name)} · ${esc(g.evil ? T("evil") : T("good"))}</span></div><div class="rtext">${esc(g.ability)}</div>`;
   document.body.classList.toggle("night", g.phase === "night");
-  if (g.phase !== lastPhase) { phaseBanner(g); lastPhase = g.phase; }
+  lastPhase = g.phase;
 
   for (const e of g.log) addLine(e, g);
   if (g.log.length) { since = g.log_len; const p = $("pane-story"); p.scrollTop = p.scrollHeight; }
@@ -414,13 +441,23 @@ function addLine(e, g) {
     else d.append(t);
   } else if (e.key === "day_header") { d.classList.add("day"); d.textContent = t; }
   else if (/^(night_falls|dawn_|phase_|vote_on|chats_step|game_start)/.test(e.key)) { d.classList.add("sys"); d.textContent = t; }
-  else if (e.quote !== null && name) { d.classList.add("say"); const b = document.createElement("b"); b.textContent = name + (lang === "zh" ? "：" : ": "); d.append(b, e.quote); }
+  else if (e.quote !== null && name) {
+    d.classList.add("say");
+    const tagName = (UI[lang].tags || UI.en.tags)[e.sub];
+    if (tagName) { const tg = document.createElement("span"); tg.className = "tag2 " + (e.sub || "").replace(/_.*/, ""); tg.textContent = tagName; d.append(tg); }
+    if (e.sub === "report") d.classList.add("info-line");
+    const b = document.createElement("b"); b.textContent = name + (lang === "zh" ? "：" : ": "); d.append(b, e.quote);
+  }
   else { if (/^(votes_|executed|winner|virgin|shoot|was_saint|mayor_win|no_execution)/.test(e.key)) d.classList.add("result"); d.textContent = t; }
   $("pane-story").append(d);
   if (e.private) $("pane-mine").append(d.cloneNode(true));
   if (name && (e.quote || e.key === "shoot" || e.key.startsWith("nominates"))) {
-    bubbles = { [e.speaker]: { text: e.quote || t, chat: e.chat, until: Date.now() + 5200 } };  // only the latest speaker
+    bubbles = { [e.speaker]: { text: e.quote || t, chat: e.chat, until: Infinity, born: Date.now() } };  // stays until the next line
   }
+  if (/^(nominates|votes_|executed|no_execution|virgin|shoot|vote_on|dawn_|claim_change)/.test(e.key) || e.sub === "claim_change") {
+    $("ticker").hidden = false; $("ticker").textContent = t;
+  }
+  if (e.key === "night_falls") { $("ticker").hidden = true; }
 }
 
 // ---- table ----------------------------------------------------------------------------------
@@ -452,7 +489,7 @@ function drawTable(g) {
     if (b && b.until > now) {
       const bp = seatPos(i, g.players, 22);
       const bub = document.createElement("div");
-      bub.className = "bubble" + (b.chat ? " chat" : "") + (now - (b.until - 5200) < 400 ? " new" : "");
+      bub.className = "bubble" + (b.chat ? " chat" : "") + (now - b.born < 400 ? " new" : "");
       bub.textContent = b.text;
       bub.style.left = `calc(${bp.x}% - 115px)`; bub.style.top = `calc(${bp.y}% - 22px)`;
       tbl.append(bub);
@@ -517,6 +554,7 @@ function drawPrompt(g, force) {
     }
     return;
   }
+  if (!p || p.type !== "ack") { if (!$("card").hidden && !(p && p.type === "ack")) $("card").hidden = true; }
   if (!p) {
     promptId = null; picked = [];
     const who = g.speaking !== null && g.speaking !== undefined ? T("speakingNow", { name: g.seats[g.speaking].name }) : T("thinking");
@@ -525,12 +563,15 @@ function drawPrompt(g, force) {
     return;
   }
   box.dataset.wait = "";
+  if (p.type === "ack") { showCard(p, g); return; }
   const key = p.id + lang;
   if (key === promptId && !force) return;
   if (key !== promptId) { picked = []; promptId = key; drawTable(g); }
   const name = s => g.seats[s].name;
   let html = `<div class="q">${esc(p.text)}</div>`;
-  if (p.type === "choose") {
+  if (p.type === "next") {
+    html = `<div class="opts"><button class="primary" data-next="1">${esc(T("nextLine"))}</button></div>`;
+  } else if (p.type === "choose") {
     html += `<div class="opts">${p.labels.map((l, i) => `<button class="${i === p.default ? "primary" : ""}" data-v="${i}">${esc(l)}</button>`).join("")}</div>`;
   } else if (p.type === "yesno") {
     html += `<div class="opts"><button class="primary" data-yes="1">${esc(T("yes"))}</button><button data-yes="0">${esc(T("no"))}</button></div>`;
@@ -548,8 +589,39 @@ function drawPrompt(g, force) {
   box.querySelectorAll("[data-v]").forEach(b => b.onclick = () => answer(+b.dataset.v));
   box.querySelectorAll("[data-yes]").forEach(b => b.onclick = () => answer(b.dataset.yes === "1"));
   box.querySelectorAll("[data-pass]").forEach(b => b.onclick = () => answer(null));
+  box.querySelectorAll("[data-next]").forEach(b => b.onclick = () => answer(true));
   if ($("confirm")) $("confirm").onclick = () => answer(picked);
   if ($("dflt")) $("dflt").onclick = () => answer(p.default);
+}
+
+// An event card: stays up a few seconds (longer when slower), or until "Continue".
+let cardFor = null, cardTimer = null;
+const CARD_SECONDS = { slow: 8, normal: 5.5, fast: 3, step: 0 };
+function showCard(p, g) {
+  if (cardFor === p.id + lang) return;
+  cardFor = p.id + lang;
+  const card = $("card");
+  card.classList.toggle("night", g.phase === "night");
+  $("cardTitle").textContent = p.title || "";
+  $("cardText").textContent = p.text || "";
+  $("cardText").hidden = !p.text;
+  $("cardBtn").textContent = T("cont");
+  card.hidden = false;
+  clearTimeout(cardTimer);
+  const secs = CARD_SECONDS[g.speed] ?? 5.5, bar = $("cardBar");
+  bar.style.transition = "none"; bar.style.transform = "scaleX(1)";
+  bar.parentElement.hidden = !secs;
+  if (secs) {
+    requestAnimationFrame(() => { bar.style.transition = `transform ${secs}s linear`; bar.style.transform = "scaleX(0)"; });
+    cardTimer = setTimeout(closeCard, secs * 1000);
+  }
+  $("cardBtn").onclick = closeCard;
+  $("cardBtn").focus();
+}
+function closeCard() {
+  clearTimeout(cardTimer);
+  $("card").hidden = true;
+  if (game && game.prompt && game.prompt.type === "ack") answer(true);
 }
 
 async function answer(value) {
