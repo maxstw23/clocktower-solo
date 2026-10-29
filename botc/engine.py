@@ -457,6 +457,7 @@ class Game:
         self.day += 1
         self.dusk = None
         self.suggest = {}
+        self.pub = replace(self.pub, nights=self.night)
         self.phase = "dawn"
         await self.say(M("day_header", d=self.day))
         died = [S(d.seat) for d in self.pub.deaths if d.tick == night_tick(self.night)]
@@ -524,6 +525,8 @@ class Game:
             await self.speech(r.seat, self._report_msg(r))
 
     def _report_msg(self, r):
+        if r.kind == "monk":
+            return M("report_monk", n=r.night, a=S(r.data[0]))
         return self.m("report", n=r.night, role=R(r.kind), info=self._info_text(r))
 
     def _info_nights(self, s, kind, include_reported=False):

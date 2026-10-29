@@ -36,7 +36,7 @@ FREE = {"empath": 1, "chef": 1, "fortune_teller": 1, "washerwoman": 1, "libraria
 POISON_WEIGHT, MISREG_WEIGHT, DRUNK_WEIGHT = 0.1, 0.2, 0.2  # Occam: consider excuses, but discount them
 NIGHT_KILLED_EVIL = 0.1  # the Demon rarely kills its own team
 BLUFF_WEIGHT = 0.2       # a good player is still bluffing
-CHANGE_WEIGHT = 0.5      # per claim change by a good player: having lied costs trust
+CHANGE_WEIGHT = 0.7      # per claim change by a good player: having lied costs trust
 OF_KIND = {"townsfolk": TOWNSFOLK, "outsider": OUTSIDERS}
 
 
@@ -266,6 +266,20 @@ def evaluate(roles, pub, allow_poison=True, allow_misreg=True):
         elif d.cause == "execution" and role_at(d.seat, d.tick) == "saint":
             if not excuse(FAIL, d.seat, d.tick // 2):
                 return None
+
+    # A peaceful night needs a reason: the Demon hit someone the Monk protected, or the Soldier,
+    # or the Demon was poisoned. (The Demon always attacks in this version.)
+    killed_on = {(d.tick + 1) // 2 for d in pub.deaths if d.cause == "night"}
+    imp = roles.index("imp")
+    for night in range(2, pub.nights + 1):
+        tick = night_tick(night)
+        demon = promo_seat if promo_seat is not None and tick > promo_tick else imp
+        if night in killed_on or dead_tick.get(demon, 10**9) < tick:
+            continue
+        guards = [s for s in range(n) if dead_tick.get(s, 10**9) >= tick
+                  and (could_be(s, "monk") or could_be(s, "soldier")) and roles[s] != "drunk"]
+        if not guards and not excuse(FAIL, demon, night):
+            return None
 
     for sh in pub.shots:
         target = role_at(sh.target, day_tick(sh.day))

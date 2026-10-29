@@ -230,7 +230,9 @@ class HumanAgent(Agent):
         return await self.io.seat(M("q_poison"), self._others(), targets[0])
 
     async def kill_pick(self, game):
-        targets = [s for s in self._others() if s not in self.team] or self._others()
+        claims = game.pub.claims or (None,) * game.n
+        targets = ([s for s in self._others() if s not in self.team and claims[s] != "soldier" and s not in game.survived]
+                   or [s for s in self._others() if s not in self.team] or self._others())
         return await self.io.seat(M("q_kill"), self._others(), targets[0])
 
     # --- day ---------------------------------------------------------------------------------

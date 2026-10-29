@@ -261,24 +261,34 @@ class GoodAgent(Agent):
             if virgins:
                 return virgins[0]
         cands = [s for s in game.alive if s != self.seat and s not in nominated]
+        if KIND[self.role] == "townsfolk":
+            # Nominating a claimed Virgin as a Townsfolk gets you executed if they're real.
+            cands = [s for s in cands if not (game.pub.claims and game.pub.claims[s] == "virgin"
+                                              and s not in game.ever_nominated)]
         if not cands:
             return None
         fakes = [s for s in self.impostors(game) if s in cands]
         if fakes and game.pub.claims[self.seat] == self.role:
             return fakes[0]  # call out whoever claims my character
         top = self.rank(cands, lambda s: -self.suspicion(game, s))[0]
-        return top if self.suspicion(game, top) >= self.threshold(self.profile.nominate_at, game) else None
+        sus = self.suspicion(game, top)
+        # Someone who stands out from the rest is worth nominating even when nobody looks very bad.
+        others = [self.suspicion(game, s) for s in game.alive if s not in (self.seat, top)]
+        stands_out = bool(others) and sus >= 20 and sus >= sum(others) / len(others) + 15
+        return top if sus >= self.threshold(self.profile.nominate_at, game) or stands_out else None
 
     def vote(self, game, nominee, yes, needed, block, ghost):
-        """Yes if suspicious enough and more suspicious than whoever is already on the block."""
+        """Yes if suspicious enough and clearly more suspicious than whoever is already on the block."""
         if nominee == self.seat:
             return False
+        endgame = len(game.alive) <= 4
         sus = self.suspicion(game, nominee)
-        if block is not None and sus <= self.suspicion(game, block):
+        # In the endgame a tie means nobody dies, which hands the game to evil: only switch for a clear reason.
+        if block is not None and sus <= self.suspicion(game, block) + (20 if endgame else 5):
             return False
         t = self.threshold(self.profile.vote_at, game) - self.profile.bandwagon * yes
         if game.pub.claims and game.pub.claims[nominee] == "saint":
-            t += self.profile.saint_caution
+            t = max(t + self.profile.saint_caution, 70 if endgame else 0)
         if ghost:
             t = max(t, self.profile.ghost_vote_at)
         return sus >= t

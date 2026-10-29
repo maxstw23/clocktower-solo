@@ -84,6 +84,7 @@ class Public:
     deaths: tuple = ()
     shots: tuple = ()
     first_noms: tuple = ()
+    nights: int = 0    # nights completed (so a night with no death is known to have been peaceful)
     votes: tuple = ()  # not used by the solver, only by social reasoning
 
     def __hash__(self):
@@ -91,7 +92,7 @@ class Public:
         h = self.__dict__.get("_hash")
         if h is None:
             h = hash((self.n, self.claims, self.claim_log, self.reports, self.deaths, self.shots,
-                      self.first_noms, self.votes))
+                      self.first_noms, self.votes, self.nights))
             object.__setattr__(self, "_hash", h)
         return h
 
