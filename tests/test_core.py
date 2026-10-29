@@ -6,6 +6,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from botc.engine import Game  # noqa: E402
+from botc.human import TerminalIO  # noqa: E402
 from botc.public import Death, Public, Report  # noqa: E402
 from botc.worlds import Solver  # noqa: E402
 
@@ -39,14 +40,42 @@ def test_human_seat_with_default_answers():
         raise EOFError
     for seed in range(4):
         for seat in range(8):
-            g = Game(8, seed, out=None, check=True, human=seat, inp=no_input, hints=True)
+            g = Game(8, seed, out=None, check=True, human=seat, hints=True,
+                     io=TerminalIO(inp=no_input, out=lambda msg: None))
             assert g.run() in ("good", "evil", None)
+
+
+def test_changing_your_claim_costs_trust():
+    from botc.agents import REFERENCE, believe
+    claims = ("empath", "chef", "monk", "slayer", "soldier", "virgin", "mayor")
+    honest = Public(7)
+    for s, c in enumerate(claims):
+        honest = honest.claim(1, s, c)
+    switched = Public(7).claim(1, 0, "mayor")
+    for s, c in enumerate(claims[1:], 1):
+        switched = switched.claim(1, s, c)
+    switched = switched.claim(2, 0, "empath")  # same final claims, but seat 0 lied first
+    solver = Solver()
+    before = believe(solver, honest, REFERENCE).evil_pct(0)
+    after = believe(solver, switched, REFERENCE).evil_pct(0)
+    assert after > before
+
+
+def test_double_claim_allows_a_good_bluffer():
+    # Two Empaths: either may be the good bluffer, so neither is forced to be evil.
+    claims = ("empath", "chef", "monk", "slayer", "soldier", "virgin", "empath")
+    pub = Public(7)
+    for s, c in enumerate(claims):
+        pub = pub.claim(1, s, c)
+    worlds = Solver().worlds(pub)
+    assert any(w.bluffs == 1 and w.roles[0] == "?townsfolk" for w in worlds)
+    assert any(w.bluffs == 1 and w.roles[6] == "?townsfolk" for w in worlds)
 
 
 def test_empath_zero_clears_neighbours():
     # 7 players: 5 townsfolk, 0 outsiders, 1 minion, 1 imp
     claims = ("empath", "chef", "monk", "slayer", "soldier", "virgin", "mayor")
-    pub = Public(7, claims, reports=(Report(0, 1, "empath", (0,)),))
+    pub = Public(7, claims, reports=(Report(0, 1, "empath", (0,)),))  # claims given directly, no history
     worlds = [w for w in Solver().worlds(pub) if w.excuses == 0 and w.roles[0] == "empath"]
     assert worlds and all(w.demon not in (1, 6) for w in worlds)
 

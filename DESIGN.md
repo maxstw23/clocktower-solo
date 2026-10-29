@@ -3,7 +3,8 @@
 Goal: a single-player game whose "fuzzy" parts (imperfect players, a balancing Storyteller) are
 deterministic given a hidden seed, with no LLM in the game state.
 
-    python play.py --hints            # play one seat (add --seed N --seat K to replay)
+    python play.py                    # play one seat in your browser (http://127.0.0.1:8765)
+    python play.py --terminal         # or in the terminal
     python sim.py --seed 3            # one narrated all-AI game
     python sim.py --games 30 --players 8 --check
     python tests/test_core.py
@@ -18,13 +19,43 @@ deterministic given a hidden seed, with no LLM in the game state.
 | Agents | `agents.py` | Bounded views of the solver + fixed social dials; evil theory of mind |
 | Storyteller | `storyteller.py` | Picks among legal options to steer the game's tension |
 | Engine | `engine.py` | Grimoire (truth), night order, day procedure, win conditions |
-| Human seat | `human.py` | Same moves as an AI player, asked on the terminal; every prompt has a default |
+| Human seat | `human.py` | Same moves as an AI player; questions go to the terminal or the browser |
+| Browser UI | `web.py`, `static/index.html` | Local server (standard library) and a one-page table view |
 
 ## Key abstractions
 
+**The day.** Dawn; on day 1 an introduction round (everyone states a character or stays silent);
+then a discussion round where each player speaks once (claims or changes their claim, shares what
+their ability showed them, says whom they suspect and why); then nominations, each with the
+nominator's reason, the nominee's defence, and a vote. Reasons are generated from the solver:
+a double claim, a changed claim, a pushed execution of a now-good-looking player, a direct ping or
+YES, or "if X's info is right, they're evil in N% of the setups that fit".
+
+**Private conversations.** After introductions, players may step aside in small groups (at most
+one group per player per day). Everyone sees who talked; only the group hears what was said
+(`Whisper`). Each player reasons from their own record (`Game.record_for`): the public record
+plus what they heard in private, where a private claim overrides an earlier public one without
+costing trust (confiding is not lying to the listener; only public claim changes cost trust). AI
+policy: good players invite those they trust most (`confide_at`) and accept invitations from
+players they trust; a hidden info role confides its real character and info instead of coming out
+publicly. Evil players accept everything and invite valuable-looking good players, pool what the
+team overheard, and kill the most dangerous trusted character, so confiding in the wrong person
+gets you killed. The human can invite one or two players (who accept by trust) and accept or
+decline invitations.
+
 **Worlds and excuses.** A world is a starting role assignment. Records that contradict a sober
 good player need an *excuse*: a poisoning (at most one per night, Poisoner alive), a Spy/Recluse
-misregistration, or the Drunk. Each world records the excuses it needs.
+misregistration, the Drunk, or a good player's bluff. Each world records the excuses it needs.
+
+**Good players may lie.** Claims are a timeline (`Public.claim_log`); a player can stay silent,
+bluff, and change their claim. The solver takes a good player's *latest* claim as true, treats
+silent players as unknown good roles, and allows at most one still-hidden good bluffer, but only
+where the record gives a reason to suspect one (a double claim, an evil or Drunk claim, more
+Outsider claims than even a Baron allows, or a claimed ability that visibly failed). A bluff
+that leaves no trace is simply believed, as at a real table. Every claim change by a good player
+halves that world's weight, so lying costs trust whatever your alignment. AI good players with
+a fragile info role may hide behind a quiet cover (`hide_rate`: novice 0, regular 0.15, veteran
+0.3) and come out when nominated, double-claimed, or by `reveal_day`.
 
 **Imperfect players = restricted solver.** A `Profile` sets which excuses a player thinks of
 (poison / Drunk / misregistration) and how many they tolerate (`max_excuses`). If nothing fits,
@@ -40,8 +71,12 @@ for someone more suspicious than whoever is already on the block.
 deaths, shots, Virgin results, every nomination and vote) plus what the Storyteller told them;
 it is all one public record, `Public`. Skill decides how well players *interpret* it, never what
 they remember: `vote_memory` is how much a remembered push of a now-good-looking execution counts
-against the pusher. Evil players also remember their own story and discard lies that would make
-their claim harder to believe than it already is. The human gets the same record as a notebook
+against the pusher. Remembering a lie is not the same as keeping it
+straight: before lying, evil players check that the lie still fits (`story_check`): novices
+don't check, regulars check against their own earlier claims, veterans against the whole record.
+Over 100 games at 8 players, novice liars broke their own story in 26% of lies, regulars 6%,
+veterans 3% (only when no candidate lie fit); good wins 70 / 61 / 52 on novice / regular /
+veteran tables. The human gets the same record as a notebook
 (`notes` or `?` at any prompt).
 
 **Personal bias.** Each player has a seeded ordering of the other seats that breaks ties. That
@@ -97,12 +132,9 @@ certainty should arrive around the final day.
 
 ## Simplifications (next steps)
 
-- Everyone hard-claims on day 1; all info is public. Next: private whispers and an
-  information-reach dial, so players hold different records.
+- Private groups only share claims, info and suspicions; there is no persuasion or deal-making.
 - No star-pass, Mayor bounce, or Spy/Recluse misregistration for the Slayer/Virgin.
-- Evil reports are scored against the reference model only, not each player's profile.
-- Human seat: a good human must claim truthfully and their info is reported as received
-  (the solver assumes good players don't lie). Evil humans choose their claim and their fake
-  info freely. `--hints` shows a veteran's read; NPCs don't talk yet beyond their moves.
-- Performance: about 2s per 10-player game, about 10s at 12 players. Most of it is
-  Storyteller/evil lookahead re-checking worlds.
+- At most one undetected good bluff at a time is representable; soundness tests skip states
+  with more.
+- Performance: an 8-player game takes ~0.3s of AI thinking, 10 players ~9s. Most of it is
+  re-solving after each new claim or report, plus Storyteller and evil lookahead.

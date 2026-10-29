@@ -5,12 +5,15 @@ think of, how many they tolerate, and fixed social dials for nominating and voti
 also has a seeded personal ordering of the other seats that breaks ties, standing in for gut feel.
 
 Evil players know their team and judge their moves by running the town's reasoning on the result.
+
+Good players may bluff too: a fragile info role can hide behind a cover claim and reveal later.
+They don't have to, and it costs them: a changed claim lowers everyone's trust in them.
 """
 from dataclasses import dataclass
 
 from itertools import combinations
 
-from .roles import KIND, is_evil
+from .roles import KIND, is_evil, pretty
 from .worlds import Belief, tally
 
 
@@ -29,20 +32,29 @@ class Profile:
     slayer_at: int = 50
     saint_caution: int = 40  # extra suspicion needed to vote for a claimed Saint
     lookahead: int = 3       # evil only: how many candidate lies they test against their read of the town
+    story_check: int = 1     # evil only: before lying, check the lie fits 0 = nothing, 1 = their own
+                             # earlier claims, 2 = the whole record
     ft_split: bool = True    # Fortune Teller picks pairs that split the suspects instead of the top two
     tests_virgin: bool = False  # a townsfolk nominates the claimed Virgin on day 1 to test both
     vote_memory: int = 10    # how much a remembered push of a now-good-looking execution counts against
                              # the pusher (everyone remembers votes; this is how much they read into them)
+    considers_bluffs: bool = True  # thinks a good player might be bluffing about their character
+    hide_rate: float = 0.15  # good only: chance a fragile info role hides behind a cover claim on day 1
+    reveal_day: int = 2      # good only: a hidden player comes out by this day (or earlier if pressed)
+    speak_at: int = 25       # suspicion needed to say out loud whom they suspect
+    confide_at: int = 30     # good only: talk privately with (and confide in) players below this suspicion
 
 
 PROFILES = {
     "novice": Profile("novice", considers_poison=False, considers_drunk=False,
                       considers_misregistration=False, max_excuses=0,
                       nominate_at=30, vote_at=25, bandwagon=6, saint_caution=10, lookahead=1,
-                      ft_split=False, vote_memory=5),
+                      ft_split=False, vote_memory=5, story_check=0, considers_bluffs=False, hide_rate=0,
+                      confide_at=40),
     "regular": Profile("regular", considers_misregistration=False, max_excuses=1),
     "veteran": Profile("veteran", max_excuses=3, nominate_at=40, vote_at=35, bandwagon=1, lookahead=6,
-                       tests_virgin=True, vote_memory=20),
+                       tests_virgin=True, vote_memory=20, story_check=2, hide_rate=0.3, reveal_day=3,
+                       confide_at=20),
 }
 # How "the town" reads the record; used by the Storyteller.
 REFERENCE = Profile("reference")
@@ -52,11 +64,12 @@ def believe(solver, pub, profile, seat=None, base=None):
     """Tally the worlds a player with this profile considers. Widens assumptions if none fit."""
     if not pub.claims:
         return Belief.empty(pub.n)
-    p, m, dr = profile.considers_poison, profile.considers_misregistration, profile.considers_drunk
-    steps = ((p, m, dr, profile.max_excuses), (p, m, dr, 99), (True, True, True, 99))
-    for level, (p, m, dr, cap) in enumerate(steps):
+    p, m, dr, bl = (profile.considers_poison, profile.considers_misregistration, profile.considers_drunk,
+                    profile.considers_bluffs)
+    steps = ((p, m, dr, bl, profile.max_excuses), (p, m, dr, bl, 99), (True, True, True, True, 99))
+    for level, (p, m, dr, bl, cap) in enumerate(steps):
         worlds = [w for w in solver.worlds(pub, p, m, base)
-                  if w.excuses <= cap and (dr or w.drunk is None)
+                  if w.excuses <= cap and (dr or w.drunk is None) and (bl or not w.bluffs)
                   and (seat is None or not is_evil(w.roles[seat]))]
         if worlds:
             return tally(pub.n, worlds, relaxed=level > 0)
@@ -65,6 +78,10 @@ def believe(solver, pub, profile, seat=None, base=None):
 
 # Info roles whose ability is spent after night one: the natural Virgin testers.
 SPENT = ("washerwoman", "librarian", "investigator", "chef")
+
+# Info roles worth hiding on day 1, and the quiet roles they hide behind.
+FRAGILE = ("fortune_teller", "empath", "undertaker", "monk")
+COVERS = ("soldier", "mayor", "virgin")
 
 # How much the evil team wants a claimed role silenced, and the town wants it protected.
 VALUE = {"fortune_teller": 5, "empath": 5, "undertaker": 4, "monk": 3, "slayer": 3,
@@ -78,6 +95,7 @@ class Agent:
     def __init__(self, seat, profile, n, rng):
         self.seat = seat
         self.profile = profile
+        self.inbox = []  # info received but not yet shared
         order = list(range(n))
         rng.shuffle(order)
         self.bias = {s: i for i, s in enumerate(order)}
@@ -85,14 +103,48 @@ class Agent:
     def rank(self, seats, key):
         return sorted(seats, key=lambda s: (key(s), self.bias[s]))
 
-    @staticmethod
-    def value(game, s):
-        return VALUE.get(game.pub.claims[s], 0) if game.pub.claims else 0
+    def value(self, game, s):
+        """How valuable s's character is, as far as this player has heard (in public or in private)."""
+        claims = game.record_for(self.seat).claims
+        return VALUE.get(claims[s], 0) if claims else 0
 
     def threshold(self, base, game):
         if len(game.alive) <= 4:
             return 0  # endgame: every day without an execution is a day handed to evil
         return base - self.profile.urgency * (game.day - 1)
+
+    def explain(self, game, target, b):
+        """A one-line reason for suspecting `target`, from the record as this player reads it."""
+        pub, nm = game.record_for(self.seat), game.name
+        claim = pub.claims[target] if pub.claims else None
+        if claim is None:
+            return "they still haven't said what they are"
+        twins = [s for s, c in enumerate(pub.claims) if s != target and c == claim]
+        if twins:
+            return f"{nm(twins[0])} also claims to be the {pretty(claim)}"
+        if pub.claim_changes(target):
+            first = next(c.role for c in pub.claim_log if c.seat == target)
+            return f"they claimed {pretty(first)} before switching to {pretty(claim)}"
+        for v in reversed(pub.votes):
+            if game.executed_on(v.day) == v.nominee and b.evil_pct(v.nominee) < 30 \
+                    and target in (v.nominator, *v.voters):
+                return f"they pushed {nm(v.nominee)}'s execution, and {nm(v.nominee)} looks good now"
+        for r in reversed(pub.reports):
+            if r.seat == target or b.evil_pct(r.seat) >= 30:
+                continue
+            if r.kind == "fortune_teller" and r.data[2] and target in r.data[:2]:
+                return f"{nm(r.seat)}'s Fortune Teller got a YES on them"
+            if r.kind == "investigator" and r.data[0] is not None and target in r.data[:2]:
+                return f"{nm(r.seat)}'s Investigator ping says they might be the {pretty(r.data[2])}"
+        # Whose info, if true, most implicates them?
+        best = max(((b.evil_if_good(target, r), r) for r in {x.seat for x in pub.reports}
+                    if r != target and b.evil_pct(r) < 40), default=None)
+        if best and best[0] >= 0.6:
+            whose = "my" if best[1] == self.seat else f"{nm(best[1])}'s"
+            return f"if {whose} info is right, they're evil in {int(100 * best[0])}% of the setups that fit"
+        if b.demon_pct(target) >= 40:
+            return f"they're the Demon in {b.demon_pct(target)}% of the setups I can make fit"
+        return "nothing clears them, and I can vouch for most others"
 
 
 class GoodAgent(Agent):
@@ -100,6 +152,46 @@ class GoodAgent(Agent):
         super().__init__(seat, profile, n, rng)
         self.role = role  # what they believe they are
         self.slayer_used = False
+        self.cover = None
+        if role in FRAGILE and rng.random() < profile.hide_rate:
+            self.cover = rng.choice([c for c in COVERS if c != role])
+
+    def claim_now(self, game, pressed=False):
+        """The claim to make now, or None to leave it as it is."""
+        current = game.pub.claims[self.seat] if game.pub.claims else None
+        if current is None:
+            return self.cover or self.role
+        if current != self.role and self.should_reveal(game, pressed):
+            return self.role
+        return None
+
+    def should_reveal(self, game, pressed=False):
+        if pressed or game.day >= self.profile.reveal_day or len(game.alive) <= 5:
+            return True
+        # Someone else claims my real role (or my cover): time to come out.
+        return any(c in (self.role, self.cover) for s, c in enumerate(game.pub.claims) if s != self.seat)
+
+    def invite(self, game, free):
+        """Whom to talk to privately: the players they trust most (two if they are hiding something)."""
+        if not game.pub.claims:
+            return []
+        trusted = [s for s in self.rank(free, lambda s: self.suspicion(game, s))
+                   if self.suspicion(game, s) < self.profile.confide_at]
+        hiding = game.pub.claims[self.seat] != self.role
+        return trusted[:2 if hiding else 1]
+
+    def accept(self, game, inviter, invited):
+        return self.suspicion(game, inviter) < self.profile.confide_at + 10
+
+    def statement(self, game):
+        """Whom they say they suspect, and why; None to stay quiet."""
+        cands = [s for s in game.alive if s != self.seat]
+        if self.seat in game.dead or not cands or not game.pub.claims:
+            return None
+        top = self.rank(cands, lambda s: -self.suspicion(game, s))[0]
+        if self.suspicion(game, top) < self.profile.speak_at:
+            return None
+        return top, self.explain(game, top, game.belief_of(self))
 
     def ft_pick(self, game):
         b = game.belief_of(self)
@@ -178,6 +270,15 @@ class EvilAgent(Agent):
     def read(self, game, pub=None, base=None):
         return game.public_belief(pub, base, self.profile)
 
+    def value(self, game, s):
+        """The evil team pools what its members heard in private: a confided role is a known target."""
+        claims = [game.record_for(t).claims for t in sorted(self.team)]
+        public = game.known.claims
+        if not public:
+            return 0
+        heard = next((c[s] for c in claims if c and c[s] != public[s]), public[s])
+        return VALUE.get(heard, 0)
+
     def exposure(self, game, pub, base=None):
         """How suspicious the town would find the living evil team, given this record."""
         b = self.read(game, pub, base)
@@ -185,6 +286,27 @@ class EvilAgent(Agent):
 
     def _targets(self, game):
         return [s for s in game.alive if s not in self.team]
+
+    def invite(self, game, free):
+        """Fish for secrets: talk to the good player whose claim they'd most like to know about."""
+        targets = [s for s in free if s not in self.team]
+        if not targets or not game.pub.claims:
+            return []
+        return self.rank(targets, lambda s: -self.value(game, s))[:1]
+
+    def accept(self, game, inviter, invited):
+        return True  # every private conversation is a chance to learn something
+
+    def statement(self, game):
+        """Evil players accuse like anyone else, pointing at the good player the town already doubts."""
+        cands = self._targets(game)
+        if self.seat in game.dead or not cands or not game.pub.claims:
+            return None
+        b = self.read(game)
+        top = self.rank(cands, lambda s: -b.suspicion(s))[0]
+        if b.suspicion(top) < self.profile.speak_at:
+            return None
+        return top, self.explain(game, top, b)
 
     def nominate(self, game, nominated):
         b = self.read(game)
@@ -213,4 +335,5 @@ class EvilAgent(Agent):
         b = self.read(game)
         cands = [s for s in self._targets(game) if s not in self.survived] or self._targets(game)
         safe = [s for s in cands if game.pub.claims[s] not in ("soldier", "ravenkeeper")] or cands
-        return self.rank(safe, lambda s: (b.evil_pct(s), -self.value(game, s)))[0]
+        # Kill whoever is most dangerous: a valuable character the town trusts.
+        return self.rank(safe, lambda s: b.evil_pct(s) - 10 * self.value(game, s))[0]
