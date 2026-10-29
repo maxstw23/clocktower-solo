@@ -17,6 +17,7 @@ from .agents import PROFILES, REFERENCE, EvilAgent, GoodAgent, believe
 from .human import HumanAgent, TerminalIO
 from .i18n import AbilityText, L, M, R, S, render
 from .public import Death, Nomination, Public, Report, Shot, Vote, Whisper, day_tick, night_tick
+from .agents import SPENT
 from .roles import ALL_ROLES, FIRST_NIGHT_INFO, KIND, MINIONS, OUTSIDERS, SETUP, TOWNSFOLK, WILD, is_evil
 from .storyteller import Storyteller
 from .worlds import RECLUSE_EXTRA, SPY_EXTRA, Solver
@@ -53,6 +54,11 @@ class Game:
         self.suggest = {}      # evil human's suggestions to AI teammates: "kill"/"poison" -> seat
         self.replied = set()   # (day, seat): already answered an accusation today
         self.countered = set()  # (real holder, false claimer): already called out
+        self.virgin_plan = None    # (tester, virgin) agreed for today's first nomination
+        self.virgin_planned = set()  # claimed Virgins someone already proposed testing
+        self.offers = []           # players who offered today to be executed if there's no better choice
+        self.offered_ever = set()  # an AI player makes that offer once per game
+        self.volunteer = None      # whose offer was taken up
         self.whispers = []     # everything said in private groups
         self.claim_seq = {}    # seat -> order number of their latest public claim
         self._seq = 0
@@ -170,7 +176,7 @@ class Game:
         if self.pace and speaker is not None:
             self.speaking = speaker  # a moment of "speaking…" before the words appear
             await asyncio.sleep(self.pace("lead", 0))
-        self.log.append({"m": m, "private": private, "chat": chat, "speaker": speaker})
+        self.log.append({"m": m, "private": private, "chat": chat, "speaker": speaker, "day": self.day})
         if self.out:
             text = self.text(m)
             self.out(f"  (in private) {text}" if chat else f"  (private) {text}" if private else text)
@@ -457,6 +463,8 @@ class Game:
         self.day += 1
         self.dusk = None
         self.suggest = {}
+        self.offers = []
+        self.volunteer = None
         self.pub = replace(self.pub, nights=self.night)
         self.phase = "dawn"
         await self.say(M("day_header", d=self.day))
@@ -484,6 +492,7 @@ class Game:
                     return
         self._check()
         await self._show_reads()
+        await self._plan_virgin_test()
         self.phase = "nominations"
         await self._nominations()
         self._check()
@@ -671,9 +680,16 @@ class Game:
                 if t is not None:
                     await self._whisper(h, group, text=M("suspect_plain", t=S(t)))
 
+    async def _offer(self, s):
+        if s != self.human and self._may_offer(s):
+            self.offers.append(s)
+            self.offered_ever.add(s)
+            await self.speech(s, self.m("volunteer"))
+
     async def _react(self, s):
         if s == self.human:
             return await self._human_turn(react=True)
+        await self._offer(s)
         said = self.agents[s].statement(self)
         if said:
             await self.speech(s, self.m("suspect", t=S(said[0]), why=said[1]))
@@ -707,6 +723,8 @@ class Game:
                     await self._shoot(s, t)
                     if self.winner:
                         return
+        if self.day > 1:
+            await self._offer(s)
         said = agent.statement(self) if accuse else None
         if said:
             t, why = said
@@ -771,6 +789,8 @@ class Game:
                 acts.append(("accuse", M("a_accuse")))
                 if not agent.slayer_used and "slayer" in (claim, self.perceived[h]):
                     acts.append(("shoot", M("a_shoot")))
+                if h not in self.offers:
+                    acts.append(("offer", M("a_volunteer")))
             acts.append(("done", M("a_done")))
             prompt = M("q_defend") if defending else M("q_react") if react else M("q_turn")
             keys = [a[0] for a in acts]
@@ -788,6 +808,9 @@ class Game:
                 if t is not None:
                     await self.speech(h, M("suspect_plain", t=S(t)))
                     await self._reply(t)
+            elif act == "offer":
+                self.offers.append(h)
+                await self.speech(h, self.m("volunteer"))
             elif act == "shoot":
                 t = await io.seat(M("q_shoot"), [s for s in self.alive if s != h])
                 if t is not None:
@@ -919,7 +942,18 @@ class Game:
         await self.beat(M("phase_noms_title"), M("phase_noms_body"))
         await self._show_hint()
         nominated, nominators = set(), set()
-        best, block, tie = 0, None, False
+        st = {"best": 0, "block": None, "tie": False}
+        # A Virgin test the table agreed on goes first.
+        plan, self.virgin_plan = self.virgin_plan, None
+        if plan:
+            tester, virgin = plan
+            if tester in self.alive and virgin in self.alive and virgin not in self.ever_nominated:
+                nominators.add(tester)
+                nominated.add(virgin)
+                await self.say(M("nominates_test", a=S(tester), t=S(virgin)), speaker=tester)
+                if await self._vote_on(tester, virgin, st):
+                    return
+                await self._after_failed_test(tester, virgin)
         k = self.day % self.n
         order = list(range(k, self.n)) + list(range(k))
         progress = True
@@ -940,25 +974,20 @@ class Game:
                 else:
                     b = agent.read(self) if s in self.team else self.belief_of(agent)
                     await self.say(self.m("nominates", a=S(s), t=S(t), why=agent.explain(self, t, b)), speaker=s)
-                if await self._virgin(s, t):
+                if await self._vote_on(s, t, st):
                     return
-                await self._defend(t)
-                majority = (len(self.alive) + 1) // 2
-                needed = max(majority, best + 1)
-                on_block = None if tie else block
-                await self.say(M("vote_on_block", t=S(t), needed=needed, b=S(on_block)) if on_block is not None
-                         else M("vote_on", t=S(t), needed=needed))
-                voters = await self._vote(t, needed, on_block)
-                self.pub = replace(self.pub, votes=self.pub.votes + (Vote(self.day, s, t, tuple(voters)),))
-                who = L((S(v) for v in voters), paren=True)
-                if len(voters) >= majority and len(voters) > best:
-                    best, block, tie = len(voters), t, False
-                    await self.say(M("votes_block", k=len(voters), voters=who, t=S(t)))
-                elif len(voters) >= majority and len(voters) == best:
-                    tie = True
-                    await self.say(M("votes_tie", k=len(voters), voters=who))
-                else:
-                    await self.say(M("votes_short", k=len(voters), voters=who))
+        # Nobody about to die: take up an offer made in the discussion.
+        offers = [x for x in self.offers if x in self.alive and x not in nominated]
+        if st["block"] is None and offers:
+            v = offers[0]
+            self.volunteer = v
+            by = next((x for x in self.alive if x not in nominators and x not in (v, self.human)
+                       and x not in self.team), v)
+            await self.say(M("nominates_self", a=S(v)) if by == v else M("nominates_offer", a=S(by), t=S(v)),
+                           speaker=by)
+            if await self._vote_on(by, v, st):
+                return
+        best, block, tie = st["best"], st["block"], st["tie"]
         if block is not None and not tie:
             await self.say(M("executed", t=S(block)))
             await self.beat(M("result_title"), M("executed", t=S(block)))
@@ -970,6 +999,84 @@ class Game:
             if len(self.alive) == 3 and any(self.roles[s] == "mayor" and self.poisoned != s for s in self.alive):
                 await self.say(M("mayor_win"))
                 self.winner = "good"
+
+    async def _vote_on(self, s, t, st):
+        """Virgin check, defence and vote for one nomination. True if the day ends at once."""
+        if await self._virgin(s, t):
+            return True
+        if s != t:
+            await self._defend(t)
+        majority = (len(self.alive) + 1) // 2
+        needed = max(majority, st["best"] + 1)
+        on_block = None if st["tie"] else st["block"]
+        await self.say(M("vote_on_block", t=S(t), needed=needed, b=S(on_block)) if on_block is not None
+                       else M("vote_on", t=S(t), needed=needed))
+        voters = await self._vote(t, needed, on_block)
+        self.pub = replace(self.pub, votes=self.pub.votes + (Vote(self.day, s, t, tuple(voters)),))
+        who = L((S(v) for v in voters), paren=True)
+        if len(voters) >= majority and len(voters) > st["best"]:
+            st.update(best=len(voters), block=t, tie=False)
+            await self.say(M("votes_block", k=len(voters), voters=who, t=S(t)))
+        elif len(voters) >= majority and len(voters) == st["best"]:
+            st["tie"] = True
+            await self.say(M("votes_tie", k=len(voters), voters=who))
+        else:
+            await self.say(M("votes_short", k=len(voters), voters=who))
+        return False
+
+    async def _after_failed_test(self, tester, virgin):
+        """The Virgin test did nothing: both sides explain what that means."""
+        if virgin != self.human and virgin not in self.team and self.perceived[virgin] == "virgin":
+            await self.speech(virgin, self.m("virgin_dud"))  # thinks they're the Virgin: drunk or poisoned?
+        if tester == self.human:
+            return
+        if tester in self.team:
+            await self.speech(tester, self.m("smear_virgin", vg=S(virgin)))  # dirty the Virgin
+        else:
+            await self.speech(tester, self.m("virgin_result", vg=S(virgin)))
+
+    def _may_offer(self, x):
+        """A good first-night info role, on day 1 or 2, while someone claims Undertaker."""
+        claims = self.pub.claims or ()
+        agent = self.agents[x]
+        return (self.day <= 2 and x in self.alive and x not in self.team and x not in self.offered_ever
+                and agent.profile.name != "novice" and bool(claims) and claims[x] == agent.role
+                and agent.role in SPENT and any(claims[y] == "undertaker" for y in self.alive if y != x))
+
+    async def _plan_virgin_test(self):
+        """Someone proposes that a first-night info role nominate the claimed Virgin: one
+        nomination tests both of them."""
+        claims = self.pub.claims or ()
+        virgins = [x for x in self.alive if claims and claims[x] == "virgin" and x not in self.ever_nominated
+                   and x not in self.virgin_planned]
+        if not virgins:
+            return
+        v = virgins[0]
+        planners = [x for x in self.alive if x not in self.team and x not in (self.human, v)
+                    and self.agents[x].profile.name != "novice"]
+        testers = [x for x in self.alive if x != v and claims[x] in SPENT]
+        if not planners or not testers:
+            return
+        p = planners[0]
+        self.virgin_planned.add(v)
+        agent = self.agents[p]
+        t = min(testers, key=lambda x: (agent.suspicion(self, x) if x != p else 0, agent.bias[x]))
+        await self.speech(p, M("virgin_plan", vg=S(v), t=S(t)))
+        if t == self.human:
+            if await self.agents[t].io.yes_no(M("q_virgin_test", vg=S(v))):
+                await self.speech(t, M("virgin_ok"))
+                self.virgin_plan = (t, v)
+            return
+        others = [x for x in testers if x not in (t, self.human) and x not in self.team]
+        if t in self.team and self.agents[t].profile.name != "novice" and others:
+            # An evil "Townsfolk" would not trigger the Virgin: steer the test to someone else.
+            alt = others[0]
+            await self.speech(t, M("virgin_deflect", t=S(alt)))
+            await self.speech(alt, M("virgin_ok"))
+            self.virgin_plan = (alt, v)
+            return
+        await self.speech(t, M("virgin_ok"))  # an evil novice goes along, and will smear the Virgin
+        self.virgin_plan = (t, v)
 
     async def _defend(self, t):
         """The nominee speaks before the vote."""

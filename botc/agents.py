@@ -54,8 +54,8 @@ PROFILES = {
                       nominate_at=30, vote_at=25, bandwagon=6, saint_caution=10, lookahead=1,
                       ft_split=False, vote_memory=5, story_check=0, considers_bluffs=False, hide_rate=0,
                       confide_at=40, quiet_rate=0, silence_cost=8),
-    "regular": Profile("regular", considers_misregistration=False, max_excuses=1),
-    "veteran": Profile("veteran", max_excuses=3, nominate_at=40, vote_at=35, bandwagon=1, lookahead=6,
+    "regular": Profile("regular", considers_misregistration=False, max_excuses=1, nominate_at=30),
+    "veteran": Profile("veteran", max_excuses=3, nominate_at=35, vote_at=35, bandwagon=1, lookahead=6,
                        tests_virgin=True, vote_memory=20, story_check=2, hide_rate=0.3, reveal_day=3,
                        confide_at=20, quiet_rate=0.35, silence_cost=20),
 }
@@ -154,7 +154,7 @@ class Agent:
             return M("r_ifinfo", whose=whose, pct=int(100 * best[0]))
         if b.demon_pct(target) >= 40:
             return M("r_demon_pct", pct=b.demon_pct(target))
-        return M("r_nothing")
+        return M("r_nothing", v=self.seat * 3 + target)
 
 
 class GoodAgent(Agent):
@@ -284,6 +284,10 @@ class GoodAgent(Agent):
         endgame = len(game.alive) <= 4
         sus = self.suspicion(game, nominee)
         # In the endgame a tie means nobody dies, which hands the game to evil: only switch for a clear reason.
+        if nominee == game.volunteer and block is None:
+            # Nobody better to execute: take the offer, unless someone else looks clearly worse.
+            others = [self.suspicion(game, s) for s in game.alive if s not in (self.seat, nominee)]
+            return not others or max(others) < self.threshold(self.profile.nominate_at, game)
         if block is not None and sus <= self.suspicion(game, block) + (20 if endgame else 5):
             return False
         t = self.threshold(self.profile.vote_at, game) - self.profile.bandwagon * yes
