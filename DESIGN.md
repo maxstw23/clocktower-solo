@@ -302,7 +302,14 @@ star-pass heir) to help the side that is behind.
      neighbours, a clash ("their story and mine can't both be true"), accusing a good-looking
      player. A near-unanimous vote no longer counts as anyone "pushing" an execution.
    - Good wins (30 games each, 8 players 100): 5p 13, 6p 15, 7p 17, 8p 60-70%, 9p 20, 10p 14,
-     11p 18, 12p 15. Executions hit evil 30-45%.
+     11p 18, 12p 15, 13p 14, 15p 11. Executions hit evil 25-45%.
+   - Evil lies are chosen by their direct effect (the notebook lines they add: clear the team,
+     point at doubted good players; a little bonus for what is actually true). Before that, a
+     Demon bluffing Chef or Empath said a random number and won 2 of 21 games; after, 9 of 23,
+     and 8-player good wins fell to 52-60%.
+   - Table talk: a player who would repeat an earlier reason agrees with its first speaker
+     instead; the owner of cited info stands by it; evidence heard in private is cited as private
+     so a hidden info role isn't outed.
 3. Theories and decisions; then evil on the same notebook; then the Storyteller. Partly done:
    evil liars check lies like people (no new clash with what's public; veterans: some theory
    still has them honest) and pick lies by pattern (frame whoever the town already doubts, else a
