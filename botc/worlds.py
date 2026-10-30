@@ -268,6 +268,7 @@ def _evaluate(roles, pub, allow_poison, allow_misreg, promos):
     req = defaultdict(set)     # night -> seats that must have been poisoned
     forbid = defaultdict(set)  # night -> seats that must not have been poisoned
     misregs = 0
+    poisoner = roles.index("poisoner") if "poisoner" in roles else None
 
     def excuse(res, s, night):
         nonlocal misregs
@@ -276,7 +277,9 @@ def _evaluate(roles, pub, allow_poison, allow_misreg, promos):
         if res == MISREG and allow_misreg:
             misregs += 1
             return True
-        if allow_poison:
+        # Poison: one player a night, and only while the Poisoner lives (checked in full below).
+        if allow_poison and poisoner is not None and req[night] <= {s} \
+                and dead_tick.get(poisoner, 10**9) >= night_tick(night):
             req[night].add(s)
             return True
         return False
@@ -357,8 +360,6 @@ def _evaluate(roles, pub, allow_poison, allow_misreg, promos):
             if not excuse(FAIL, fn.nominee, fn.day):
                 return None
 
-    poisoner = roles.index("poisoner") if "poisoner" in roles else None
-
     def poison_ok(need):
         for night, seats in need.items():
             if len(seats) > 1 or poisoner is None or seats & forbid[night]:
@@ -424,7 +425,7 @@ class Solver:
     def __init__(self, cache_size=50000):
         self._structs = {}
         self._cache = OrderedDict()
-        self._latest = None  # last record solved from scratch or by extension
+        self._latest = {}  # (claims, liar candidates) -> last record solved from scratch or by extension
         self.cache_size = cache_size
 
     def structures(self, pub):
@@ -446,13 +447,17 @@ class Solver:
             candidates = [w.roles for w in self.worlds(pub, base=base)]
         elif base is not None and _extends(pub, base):
             candidates = [w.roles for w in self.worlds(base)]
-        elif self._latest is not None and self._latest != pub and _extends(pub, self._latest):
-            candidates = [w.roles for w in self.worlds(self._latest)]
         else:
-            candidates = self.structures(pub)
+            # Each player's view of the record grows on its own; extend the last one solved.
+            lineage = (pub.claims, liar_candidates(pub))
+            latest = self._latest.get(lineage)
+            if latest is not None and latest != pub and _extends(pub, latest):
+                candidates = [w.roles for w in self.worlds(latest)]
+            else:
+                candidates = self.structures(pub)
         result = [w for r in dict.fromkeys(candidates) for w in evaluate(r, pub, allow_poison, allow_misreg)]
         if allow_poison and allow_misreg and base is None:
-            self._latest = pub
+            self._latest[(pub.claims, liar_candidates(pub))] = pub
         self._cache[key] = result
         if len(self._cache) > self.cache_size:
             self._cache.popitem(last=False)
