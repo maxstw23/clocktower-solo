@@ -151,7 +151,10 @@ class Game:
             claims[self.human] = self.human_bluff
         # The evil team settles its bluffs on night one; the Demon picks first.
         for s in sorted(self.team - {self.human} if self.human_bluff else self.team, key=lambda s: s != self.demon):
-            claims[s] = bluffs.pop(0) if bluffs else rng.choice([r for r in TOWNSFOLK if r not in claims])
+            # Big games can run out of unclaimed Townsfolk: then an unclaimed Outsider, then risk a double claim.
+            free = ([r for r in TOWNSFOLK if r not in claims] or [r for r in OUTSIDERS if r not in claims and r != "drunk"]
+                    or list(TOWNSFOLK))
+            claims[s] = bluffs.pop(0) if bluffs else rng.choice(free)
         self.planned_claims = tuple(claims)
         if self.human is not None:
             self._seat_human(io)
