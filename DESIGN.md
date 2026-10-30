@@ -160,12 +160,134 @@ certainty should arrive around the final day.
 - Bug fixed: Python randomises string hashing per process, and option lists were built by
   iterating a set of role names, so "same seed, same game" only held within one process.
   Now sorted, with a cross-process test.
+- The public read is gamed by evil's lookahead: lies tested against the town's exact solver
+  leave the town's top suspect evil no more often than chance (8 players, day 1: 22% vs 25%
+  baseline; with lookahead 1 for everyone, 33%). Kept as is for now (owner's choice); the
+  redesign below removes the cause.
+- At 10 players good wins only ~30% and executions hit evil below chance; neither FREE nor
+  lookahead explains it fully. 12-15 player games take minutes of solver time.
 
-## Simplifications (next steps)
+## Next architecture: reason like a human player
+
+The world solver enumerates every possible grimoire. That is not how anyone plays, it does not
+scale past 10 players, and it hands evil an exact model of the town to optimise against. The
+plan replaces it with the reasoning a real player does at the table. The current solver stays as
+an offline referee for the arena (to measure what the AI misses), not as anyone's brain.
+
+### Principles
+
+1. **Everyone knows every rule.** Novices included: Baron Outsiders, Recluse and Spy
+   registration, star-pass, Scarlet Woman, poison and Drunk, peaceful nights needing a Monk or
+   Soldier. One shared rulebook drives every player. Skill is how well you *think* with the
+   rules, never which rules you know.
+2. **Perfect memory of the public record** (unchanged). Skill is interpretation.
+3. **Same skill dials for both teams.** A veteran Demon thinks exactly as well as a veteran
+   Fortune Teller; they just want different outcomes. Evil never reads the town's minds.
+4. **Characters are data.** A new script adds rows and, rarely, a rule; the reasoning, speech,
+   Storyteller and UI carry over.
+5. **Cost grows with the record, not with possible grimoires.** 15 players should cost about
+   what 5 do, including on a phone.
+
+### Information categories
+
+Every ability output, claim and game event is a statement about the grimoire, in one of four
+categories. Each category has a truth check (used for theories) and standard human inferences
+(used for the notebook).
+
+| Category | Form | Trouble Brewing | Typical inferences |
+|---|---|---|---|
+| Identity | x's character is in set S | Washerwoman, Librarian, Investigator, Undertaker, Ravenkeeper, every claim | a ping on someone who claims that character supports both; a ping nobody fits is a clash |
+| Count | evil players in group G = k | Chef, Empath | Empath 0 clears both neighbours; 1 splits suspicion |
+| Demon test | the Demon (or a decoy) is in G | Fortune Teller, Slayer shot, Virgin trigger | "yes" taints both; "no" clears both a bit; a Virgin trigger confirms two players |
+| Event | who died, survived, or was protected, and how | night deaths, executions, Monk, Soldier, Mayor | a night death is probably good; a survived attack backs a Monk or Soldier |
+
+Later scripts mostly reuse these: Clockmaker, Oracle and Mathematician are Count; Dreamer is
+Identity; Seamstress is a Demon/alignment test. New status effects (madness, droisoning) are
+tokens the truth check respects, like poison and misregistration today.
+
+### Speech acts
+
+Everything a player says or does is one record: (speaker, audience, time, act). Private chats
+are the same acts with a smaller audience.
+
+- **Claim**: "I am character R."
+- **Testimony**: "My ability showed statement P on night n."
+- **Opinion**: "I suspect x because of evidence e" (e points at an earlier act or event, so every
+  reason is a real notebook line).
+- **Move**: nominate, vote, shoot, volunteer, propose a plan (Virgin test, holding off at four).
+
+Translations are one template per act and category, not per character.
+
+### How a player reasons
+
+**Notebook.** Each act or event becomes evidence items: (source, target, direction, strength).
+The strength comes from the shared rulebook, the same for everyone. Game events (deaths, Virgin
+triggers, Undertaker reveals of the executed) have the game as source and are fully trusted.
+
+**Trust flows through sources.** A player's suspicion of x is a prior plus the evidence about x,
+each item weighted by how much the player trusts its source. Repeat a few rounds so discredit
+spreads: if Ben clashes with Eli, Ben's accusation of Dev counts less, which in turn changes how
+much Dev's info counts.
+
+**Clashes.** The main engine of deduction. A clash is a small set of players of whom at least
+one is lying, drunk or poisoned: a double claim; a ping nobody fits; a Virgin who didn't trigger
+for a claimed Townsfolk; an Empath 0 next to a claimed evil. Clashes are tracked and resolved as
+deaths, reveals and tests come in, and they are the best material for table talk ("either Ben or
+Eli is lying, and Eli's info has held up twice").
+
+**Theories.** A player builds a few concrete theories ("Imp is X, Minions are Y"), from their
+top suspects, and checks each against the notebook with the category truth checks and the full
+rulebook (setup counts, Baron, registrations, star-pass, needed poisonings). A theory needing an
+excuse (a poisoning, the Drunk) costs plausibility but is allowed. This is bounded: a handful to a
+few dozen theories, never millions.
+
+**Decisions.** Nominations, votes, Slayer shots, Monk and Fortune Teller picks, and what to say
+all read from suspicion, open clashes and the surviving theories, through the existing dials
+(thresholds, urgency, final-four and Mayor logic).
+
+### Skill dials (both teams)
+
+| Dial | Novice | Veteran |
+|---|---|---|
+| Breadth: theories held at once | 1-2, usually "my top suspect is the Demon" | 5-10, including ones that need a poisoning or the Drunk |
+| Depth: rounds of trust propagation | 1 (info taken at face value) | 3+ (discredit spreads through sources) |
+| Anchoring: how fast first impressions update | slow | fully on new evidence |
+| Herding: weight on the crowd's opinion | follows the loudest accusation, bandwagons votes | mostly their own read |
+| Personal bias | suspects whoever accused them, trusts chat partners | mostly immune |
+| Foresight: how far ahead they plan | today only | Virgin tests, saving votes for a better nominee, holding off at four, Mayor play |
+| Lie craft (evil, or good bluffing) | lies on the spot, can contradict their own story | keeps the story straight and checks it against the public record |
+
+A novice who holds one or two theories rarely gets to "maybe she's poisoned". That is a reasoning
+limit, not missing knowledge, which is how real beginners play.
+
+### Evil
+
+Evil players keep the same notebook and read how the town sees them through it, at their own
+skill. They lie with human patterns per category: confirm a harmless good player, frame someone
+already doubted, or stay vague; they never frame teammates (bussing aside). Lie craft decides
+whether they check a lie for clashes with what is already public. There is no search over the
+town's reasoning.
+
+### Storyteller
+
+The Storyteller knows the grimoire, so it needs no solver. It balances by how much the town's
+notebooks suspect the real Demon against a planned trajectory (low early, near certain around the
+final day), and uses its existing freedoms (drunk and poisoned info, registrations, Mayor bounce,
+star-pass heir) to help the side that is behind.
+
+### Migration
+
+1. Shared rulebook and the four category truth checks, data-driven per character; the current
+   solver's checks are the reference.
+2. Notebook, trust propagation and clashes for good players, behind the existing tests; compare
+   in the arena against the solver referee (discrimination, execution accuracy, win rates at 5,
+   8, 10, 12, 15 players).
+3. Theories and decisions; then evil on the same notebook; then the Storyteller.
+4. Remove the solver from play; keep it for the arena.
+5. Add one character from another script to prove the design extends.
+
+## Simplifications
 
 - Private groups only share claims, info and suspicions; there is no persuasion or deal-making.
-- No star-pass, Mayor bounce, or Spy/Recluse misregistration for the Slayer/Virgin.
 - At most one undetected good bluff at a time is representable; soundness tests skip states
   with more.
-- Performance: an 8-player game takes ~0.3s of AI thinking, 10 players ~9s. Most of it is
-  re-solving after each new claim or report, plus Storyteller and evil lookahead.
