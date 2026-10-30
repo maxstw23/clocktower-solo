@@ -803,14 +803,17 @@ class Game:
         if not options:
             return None
         if agents.REASONER == "notebook":
-            # No search over the town's reasoning: frame whoever the town already doubts most,
-            # or else give a harmless confirmation.
+            # No search over the town's reasoning, only the direct effect of what I'd say: the
+            # notebook lines it adds should clear my team or point at good players the town already
+            # doubts. Something true is a little safer: nobody can ever contradict it.
             p = notebook.suspicions(base, None, agent.profile.depth)
+            had = notebook.notebook(base)[0]
+            view = self.view()
 
             def appeal(r):
-                framed = [x for x in range(self.n) if x not in self.team and rules.frames(
-                    r, lambda y, _: y == x)]
-                return max((p[x] for x in framed), default=0.3)
+                new = [x for x in notebook.notebook(base.plus(r))[0] if x not in had and x.source == s]
+                score = sum(-x.weight if x.target in self.team else x.weight * p[x.target] for x in new)
+                return score + (0.2 if rules.truth(r, view) == rules.OK else 0)
             return max(options, key=appeal)
         options = options[:agent.profile.lookahead]
         return min(options, key=lambda r: agent.exposure(self, base.plus(r), base))
