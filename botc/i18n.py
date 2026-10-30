@@ -286,7 +286,7 @@ TEXT = {
         "chats_step": "{list} step aside to talk privately.",
         "you_step": "You step aside with {list}.",
         "declined": "{list} declined to talk with you.",
-        "hint": "Hint ({k} possible worlds): most suspicious {list}",
+        "hint": "Hint (from {k} theories I can make fit): most suspicious {list}",
         "seat_pct": "{p} {pct}",
         # end
         "winner": "*** {team} WINS after {d} day(s) ***",
@@ -528,7 +528,7 @@ TEXT = {
         "chats_step": "{list}走到一边私下交谈。",
         "you_step": "你和{list}走到一边私聊。",
         "declined": "{list}拒绝了和你私聊。",
-        "hint": "提示（{k}种可能的配置）：最可疑的是{list}",
+        "hint": "提示（基于{k}种说得通的推测）：最可疑的是{list}",
         "seat_pct": "{p} {pct}",
         "winner": "*** {team}获胜，共进行了{d}天 ***",
         "team_good": "善良阵营", "team_evil": "邪恶阵营", "team_none": "无人（达到天数上限）",

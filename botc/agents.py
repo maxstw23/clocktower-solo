@@ -68,7 +68,7 @@ PROFILES = {
 REFERENCE = Profile("reference")
 
 
-REASONER = "solver"  # or "notebook" (see notebook.py); switching over is in progress
+REASONER = "notebook"  # how players read the table: "notebook" (see notebook.py) or the old "solver"
 
 
 def believe(solver, pub, profile, seat=None, base=None):

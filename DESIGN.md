@@ -287,18 +287,27 @@ star-pass heir) to help the side that is behind.
    arena games at 8 players match the previous batch (good 49, executions 29% evil) and the
    truth stayed among the solver's worlds in every game.
 2. Notebook, trust propagation and clashes for good players, behind the existing tests; compare
-   in the arena against the solver referee (discrimination, execution accuracy, win rates at 5,
-   8, 10, 12, 15 players). **In progress** (`notebook.py`, `agents.REASONER = "notebook"`,
-   `arena.py --reasoner notebook`). Evidence cuts both ways: an accuser of someone who looks good,
-   or a voucher for someone who looks evil, takes part of the blame; that alone raised day-1
-   reads from chance to about double it. Evil liars in this mode check their lies like people
-   (no new clash with what's public; veterans: some theory still has them honest) and pick lies
-   by pattern (frame whoever the town already doubts, else a harmless confirmation) instead of
-   searching the town's reasoning. 100 games at 8 players: executions hit evil 43% (solver 35%),
-   58s (solver 81s, both including the soundness check). Balance is off: good wins 69/100 at 8
-   players but about 50% at 10 (20 games), where three evil players' coordinated fakes still
-   beat day-1 reads.
-3. Theories and decisions; then evil on the same notebook; then the Storyteller.
+   in the arena against the solver referee. **Done; the notebook is now the default reasoner**
+   (`agents.REASONER`; `arena.py --reasoner solver` for the old one). Findings:
+   - Evidence must cut both ways: an accuser of someone who looks good, or a voucher for someone
+     who looks evil, takes part of the blame. That alone raised day-1 reads from chance to about
+     double it.
+   - Theories: counting every way a line-up can be explained (Drunk seats, a hidden Outsider)
+     measured better than scoring a line-up by its best explanation, and choosing suspects from
+     the overall ranking beat "Demon among the living, Minions anywhere".
+   - Attention is limited: line-ups are thought through likeliest first until a budget of role
+     assignments (`BUDGET` x breadth) is spent. At 8 players the budget never binds.
+   - Speed per AI-only game: 10 players 5s (solver ~25s), 12 players 6s (~160s), 15 players 21s.
+   - Accusations cite the notebook line that weighs most: a Fortune Teller YES, an Empath's
+     neighbours, a clash ("their story and mine can't both be true"), accusing a good-looking
+     player. A near-unanimous vote no longer counts as anyone "pushing" an execution.
+   - Good wins (30 games each, 8 players 100): 5p 13, 6p 15, 7p 17, 8p 60-70%, 9p 20, 10p 14,
+     11p 18, 12p 15. Executions hit evil 30-45%.
+3. Theories and decisions; then evil on the same notebook; then the Storyteller. Partly done:
+   evil liars check lies like people (no new clash with what's public; veterans: some theory
+   still has them honest) and pick lies by pattern (frame whoever the town already doubts, else a
+   harmless confirmation); the Storyteller balances on the town's belief in the real Demon.
+   Still on the solver: nothing in play; the arena's soundness check.
 4. Remove the solver from play; keep it for the arena.
 5. Add one character from another script to prove the design extends.
 
