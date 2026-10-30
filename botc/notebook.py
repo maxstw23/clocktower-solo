@@ -185,6 +185,7 @@ def believe(pub, seat=None, role=None, depth=2, breadth=4):
         total = sum(p.values()) or 1
         return Belief(1.0, tuple(p.get(s, 0) / total for s in range(n)), tuple(p.get(s, 0) for s in range(n)), True)
     # A theory is as plausible as it is consistent with the rules, times how its suspects look.
+    # (Measured: counting each way a theory can be explained beats scoring it by its best one.)
     weighted = []
     for w in worlds:
         odds = 1.0
@@ -197,7 +198,8 @@ def believe(pub, seat=None, role=None, depth=2, breadth=4):
         return t
     # Alignment: half the notebook (which covers everyone), half the theories.
     evil = tuple(t.total * (p.get(s, 0) + t.evil[s] / t.total) / 2 for s in range(n))
-    return Belief(t.total, t.demon, evil, relaxed, t.count, t.pair)
+    good = tuple(t.total - e for e in t.evil)  # for "if r is good, t is evil in x%": the theories alone
+    return Belief(t.total, t.demon, evil, relaxed, t.count, t.pair, good)
 
 
 def clashes_with(seat, pub):

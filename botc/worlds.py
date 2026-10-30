@@ -405,6 +405,7 @@ class Belief:
     relaxed: bool = False  # had to widen its assumptions to find any world
     count: int = 0         # number of worlds
     pair: tuple = ()       # pair[r][t]: weight of worlds where r is good and t is evil
+    good: tuple = ()       # good[r]: weight of the worlds where r is good (default: total - evil[r])
 
     @classmethod
     def empty(cls, n):
@@ -412,7 +413,7 @@ class Belief:
 
     def evil_if_good(self, t, r):
         """How likely t is evil if r is good."""
-        good_r = self.total - self.evil[r]
+        good_r = self.good[r] if self.good else self.total - self.evil[r]
         return self.pair[r][t] / good_r if self.pair and good_r > 0 else 0.0
 
     def demon_pct(self, s):

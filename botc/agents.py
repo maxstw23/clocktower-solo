@@ -263,6 +263,10 @@ class GoodAgent(Agent):
         grudge += self.profile.silence_cost * len(game.silent_nights(s))
         return min(100, b.suspicion(s) + grudge)
 
+    def hard_case(self, game, s):
+        """Evidence alone (no grudges about votes) makes `s` very likely evil."""
+        return game.belief_of(self).suspicion(s) >= 70
+
     def trusts_mayor(self, game):
         """Three alive and a Mayor claim I believe: no execution today wins the game for good."""
         claims = game.pub.claims or ()
@@ -300,6 +304,11 @@ class GoodAgent(Agent):
         fakes = [s for s in self.impostors(game) if s in cands]
         if fakes and game.pub.claims[self.seat] == self.role:
             return fakes[0]  # call out whoever claims my character
+        if len(game.alive) <= 4:  # executing the real Saint now loses: only on hard evidence
+            cands = [s for s in cands if game.pub.claims[s] != "saint" or self.hard_case(game, s)] \
+                if game.pub.claims else cands
+            if not cands:
+                return None
         top = self.rank(cands, lambda s: -self.suspicion(game, s))[0]
         sus = self.suspicion(game, top)
         block = game.on_block
@@ -329,6 +338,8 @@ class GoodAgent(Agent):
         t = self.threshold(self.profile.vote_at, game) - self.profile.bandwagon * yes
         if game.pub.claims and game.pub.claims[nominee] == "saint":
             t = max(t + self.profile.saint_caution, 70 if endgame else 0)
+            if endgame and not self.hard_case(game, nominee):
+                return False
         if ghost:
             # Dead players keep their one vote for the decisive days, unless they are nearly sure.
             t = max(t, self.profile.ghost_vote_at if endgame else 85)
