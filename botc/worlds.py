@@ -17,15 +17,14 @@ is also how a real table works.
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, replace
 from functools import lru_cache
-from itertools import combinations, permutations, product
+from itertools import combinations, permutations
+from types import SimpleNamespace
 
+from . import rules
 from .public import day_tick, night_tick
+from .rules import FAIL, MISREG, OK
 from .roles import KIND, MINIONS, OUTSIDERS, SETUP, TOWNSFOLK, WILD, is_evil
 
-OK, MISREG, FAIL = 0, 1, 2
-SPY_EXTRA = frozenset(TOWNSFOLK + OUTSIDERS)
-RECLUSE_EXTRA = frozenset(MINIONS + ("imp",))
-PING_ROLES = ("washerwoman", "librarian", "investigator")
 
 # Likelihood that an evil or Drunk reporter would have said exactly this, relative to a sober good
 # player whose report was forced. Without it, specific true info makes its reporter look evil
@@ -40,16 +39,6 @@ BLUFF_WEIGHT = 0.2       # a good player is still bluffing
 CHANGE_WEIGHT = 0.7      # per claim change by a good player: having lied costs trust
 FRAMED_WEIGHT = 0.25     # an evil player's made-up information rarely points at their own team
 OF_KIND = {"townsfolk": TOWNSFOLK, "outsider": OUTSIDERS}
-
-
-def frames_team(r, roles):
-    """Whether a (made-up) report points at players who are evil in this world."""
-    d = r.data
-    if r.kind in ("investigator", "fortune_teller") and d[0] is not None:
-        return (r.kind == "investigator" or d[2]) and any(is_evil(roles[x]) for x in d[:2])
-    if r.kind in ("undertaker", "ravenkeeper"):
-        return is_evil(roles[d[0]]) and is_evil(d[1])
-    return False
 
 
 @dataclass(frozen=True)
@@ -198,72 +187,11 @@ def _evaluate(roles, pub, allow_poison, allow_misreg, promos):
         """An unknown good role could be any role of its kind not otherwise in play."""
         return roles[s] == role or (roles[s] in WILD and role in OF_KIND[KIND[roles[s]]] and role not in concrete)
 
-    def match(s, role, tick):
-        r = role_at(s, tick)
-        if r == role or (r in WILD and could_be(s, role)):
-            return OK
-        if (r == "spy" and role in SPY_EXTRA) or (r == "recluse" and role in RECLUSE_EXTRA):
-            return MISREG
-        return FAIL
-
-    def ping(a, b, role, tick):
-        return min(match(a, role, tick), match(b, role, tick))
-
-    def evil_count(seats, count, tick):
-        flex = [s for s in seats if role_at(s, tick) in ("spy", "recluse")]
-        truth = {s: is_evil(role_at(s, tick)) for s in seats}
-        results = {}
-        for flips in product((False, True), repeat=len(flex)):
-            evil = dict(truth)
-            for s, f in zip(flex, flips):
-                evil[s] ^= f
-            c = count(evil)
-            results[c] = results.get(c, True) and any(flips)
-        return results  # count -> needs a misregistration
-
     def alive_after(tick):
         return [s for s in range(n) if dead_tick.get(s, 10**9) > tick]
 
-    def neighbours(s, tick):
-        alive = set(alive_after(tick)) - {s}
-        found = []
-        for step in (-1, 1):
-            x = (s + step) % n
-            while x not in alive and x != s:
-                x = (x + step) % n
-            if x != s:
-                found.append(x)
-        return found
-
-    def check(r):
-        tick = night_tick(r.night)
-        d = r.data
-        if r.kind in PING_ROLES:
-            if d[0] is None:  # Librarian: no Outsiders in play
-                worst = OK
-                for s in range(n):
-                    role = role_at(s, tick)
-                    if KIND[role] == "outsider":
-                        if role != "recluse":
-                            return FAIL
-                        worst = MISREG
-                return worst
-            return ping(d[0], d[1], d[2], tick)
-        if r.kind in ("chef", "empath"):
-            if r.kind == "chef":
-                seats = list(range(n))
-                counts = evil_count(seats, lambda e: sum(e[i] and e[(i + 1) % n] for i in seats), tick)
-            else:
-                seats = neighbours(r.seat, tick)
-                counts = evil_count(seats, lambda e: sum(e.values()), tick)
-            if d[0] not in counts:
-                return FAIL
-            return MISREG if counts[d[0]] else OK
-        if r.kind == "undertaker":
-            return match(d[0], d[1], day_tick(r.night - 1))
-        if r.kind == "ravenkeeper":
-            return match(d[0], d[1], tick)
-        return OK
+    view = SimpleNamespace(n=n, role_at=role_at, demon_at=demon_at, alive_after=alive_after,
+                           could_be=could_be, red_herring=None)
 
     req = defaultdict(set)     # night -> seats that must have been poisoned
     forbid = defaultdict(set)  # night -> seats that must not have been poisoned
@@ -292,14 +220,14 @@ def _evaluate(roles, pub, allow_poison, allow_misreg, promos):
     for r in pub.reports:
         if not sober(r.seat) or roles[r.seat] != r.kind:
             weight *= FREE.get(r.kind, 1)
-            if is_evil(roles[r.seat]) and frames_team(r, roles):
+            if is_evil(roles[r.seat]) and rules.frames(r, lambda x, _: is_evil(roles[x])):
                 weight *= FRAMED_WEIGHT
             continue
         if r.kind == "fortune_teller":
             ft_reports.append(r)
         elif r.kind == "monk":
             monk_reports.append(r)
-        elif not excuse(check(r), r.seat, r.night):
+        elif not excuse(rules.truth(r, view), r.seat, r.night):
             return None
 
     for d in pub.deaths:
@@ -374,13 +302,12 @@ def _evaluate(roles, pub, allow_poison, allow_misreg, promos):
         for rh in (s for s in range(n) if not is_evil(roles[s])):
             need = defaultdict(set, {k: set(v) for k, v in req.items()})
             extra = 0
+            view.red_herring = rh
             for r in ft_reports:
-                a, b, yes = r.data
-                tick = night_tick(r.night)
-                truth = any(demon_at(tick) == x or x == rh for x in (a, b))  # the Demon now, not a dead one
-                if yes == truth:
+                res = rules.truth(r, view)  # the Demon now, not a dead one
+                if res == OK:
                     continue
-                if yes and allow_misreg and any(role_at(x, tick) == "recluse" for x in (a, b)):
+                if res == MISREG and allow_misreg:
                     extra += 1
                 elif allow_poison:
                     need[r.night].add(r.seat)

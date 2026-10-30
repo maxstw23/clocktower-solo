@@ -11,16 +11,17 @@ import asyncio
 import inspect
 import random
 from dataclasses import replace
-from itertools import combinations, product
+from itertools import combinations
+from types import SimpleNamespace
 
-from .agents import PROFILES, REFERENCE, EvilAgent, GoodAgent, believe
+from . import rules
+from .agents import PROFILES, REFERENCE, SPENT, EvilAgent, GoodAgent, believe
 from .human import HumanAgent, TerminalIO
 from .i18n import AbilityText, L, M, R, S, render
 from .public import Death, Nomination, Public, Report, Shot, Vote, Whisper, day_tick, night_tick
-from .agents import SPENT
 from .roles import ALL_ROLES, FIRST_NIGHT_INFO, KIND, MINIONS, OUTSIDERS, SETUP, TOWNSFOLK, WILD, is_evil
 from .storyteller import Storyteller
-from .worlds import RECLUSE_EXTRA, SPY_EXTRA, Solver
+from .worlds import Solver
 
 NAMES = ("Ada", "Ben", "Cleo", "Dev", "Eli", "Fay", "Gus", "Hana", "Ivo", "Jun", "Kai", "Lea", "Max", "Nia", "Oto")
 NAMES_ZH = ("安娜", "博文", "晨曦", "大伟", "恩泽", "芳芳", "国栋", "海燕", "一鸣", "俊杰", "凯文", "丽娜", "明轩", "妮妮", "欧阳")
@@ -407,71 +408,20 @@ class Game:
             why = M("why_drunk") if self.roles[s] == "drunk" else M("why_poisoned")
             self.note(M("note_shown", p=S(s), why=why, info=self.describe(report)))
 
-    def _registers_as(self, s, pool):
-        r = self.roles[s]
-        out = {r} & set(pool)
-        if r == "spy":
-            out |= SPY_EXTRA & set(pool)
-        elif r == "recluse":
-            out |= RECLUSE_EXTRA & set(pool)
-        return out
-
-    def _evil_counts(self, seats, count):
-        flex = [s for s in seats if self.roles[s] in ("spy", "recluse")]
-        counts = set()
-        for flips in product((False, True), repeat=len(flex)):
-            evil = {s: is_evil(self.roles[s]) ^ (s in flex and flips[flex.index(s)]) for s in seats}
-            counts.add(count(evil))
-        return counts
-
-    def _neighbours(self, s):
-        alive = set(self.alive) - {s}
-        found = []
-        for step in (-1, 1):
-            x = (s + step) % self.n
-            while x not in alive and x != s:
-                x = (x + step) % self.n
-            if x != s:
-                found.append(x)
-        return found
+    def view(self):
+        """The real grimoire, as the rulebook's truth check sees it (now)."""
+        return SimpleNamespace(n=self.n, role_at=lambda s, tick: self.roles[s], demon_at=lambda tick: self.demon,
+                               alive_after=lambda tick: self.alive, could_be=lambda s, role: self.roles[s] == role,
+                               red_herring=self.red_herring)
 
     def _options(self, s, kind, malf, arg):
-        """Every legal piece of information for this ability right now."""
-        n = self.n
-        others = [x for x in range(n) if x != s]
-        if kind in PING:
-            pool = PING[kind]
-            if malf:
-                # The Storyteller never shows a player their own character as someone else's.
-                opts = [(a, b, r) for a, b in combinations(others, 2) for r in pool if r != kind]
-            else:
-                opts = [(min(a, b), max(a, b), r)
-                        for a in others for r in sorted(self._registers_as(a, pool)) for b in others if b != a]
-            if kind == "librarian" and (malf or not any(
-                    KIND[self.roles[x]] == "outsider" and self.roles[x] != "recluse" for x in range(n))):
-                opts.append(ZERO)
-            return opts
-        if kind in ("chef", "empath"):
-            if malf:
-                return [(c,) for c in range(3 if kind == "empath" else 4)]
-            if kind == "chef":
-                counts = self._evil_counts(list(range(n)), lambda e: sum(e[i] and e[(i + 1) % n] for i in range(n)))
-            else:
-                counts = self._evil_counts(self._neighbours(s), lambda e: sum(e.values()))
-            return [(c,) for c in sorted(counts)]
-        if kind == "fortune_teller":
-            a, b = arg
-            truth = any(x == self.demon or x == self.red_herring for x in (a, b))
-            answers = {truth}
-            if malf or any(self.roles[x] == "recluse" for x in (a, b)):
-                answers.add(True)
-            if malf:
-                answers.add(False)
-            return [(a, b, y) for y in sorted(answers)]
-        # undertaker, ravenkeeper: learn a character
+        """Every legal piece of information for this ability right now: what is true, or for a
+        drunk or poisoned player anything the ability could say (but never their own character)."""
+        cands = rules.candidates(kind, self.n, s, arg)
         if malf:
-            return [(arg, r) for r in ALL_ROLES if r != kind]
-        return [(arg, r) for r in sorted(self._registers_as(arg, ALL_ROLES))]
+            return [d for d in cands if not rules.names_own_character(kind, d)]
+        view = self.view()
+        return [d for d in cands if rules.truth(Report(s, self.night, kind, d), view) != rules.FAIL]
 
     # --- day ---------------------------------------------------------------------------------
 
@@ -901,12 +851,7 @@ class Game:
 
     def _implicates_team(self, r):
         """A lie that would point at the liar's own teammates."""
-        d = r.data
-        if r.kind in ("investigator", "fortune_teller") and d[0] is not None:
-            return (r.kind == "investigator" or d[2]) and any(x in self.team for x in d[:2])
-        if r.kind in ("undertaker", "ravenkeeper"):
-            return d[0] in self.team and is_evil(d[1])
-        return False
+        return rules.frames(r, lambda x, _: x in self.team)
 
     def _story_cost(self, s, pub, base=None):
         """Fewest excuses under which `s` could be the sober good player they claim to be."""

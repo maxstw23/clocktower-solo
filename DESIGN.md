@@ -15,6 +15,7 @@ deterministic given a hidden seed, with no LLM in the game state.
 | Layer | File | Role |
 |---|---|---|
 | Script | `roles.py` | Trouble Brewing roles, setup counts |
+| Rulebook | `rules.py` | Characters as data; the truth check and possible outputs for each information category (shared by engine, solver and, later, every player) |
 | Public record | `public.py` | Claims, reported info, deaths, Slayer shots, first nominations. Immutable and hashable. |
 | World solver | `worlds.py` | Every starting role assignment consistent with the record (the omniscient baseline) |
 | Agents | `agents.py` | Bounded views of the solver + fixed social dials; evil theory of mind |
@@ -278,7 +279,10 @@ star-pass heir) to help the side that is behind.
 ### Migration
 
 1. Shared rulebook and the four category truth checks, data-driven per character; the current
-   solver's checks are the reference.
+   solver's checks are the reference. **Done** (`rules.py`): the engine's real and malfunctioning
+   information, the solver's checks and the "frames the team" test now all come from it; 100
+   arena games at 8 players match the previous batch (good 49, executions 29% evil) and the
+   truth stayed among the solver's worlds in every game.
 2. Notebook, trust propagation and clashes for good players, behind the existing tests; compare
    in the arena against the solver referee (discrimination, execution accuracy, win rates at 5,
    8, 10, 12, 15 players).

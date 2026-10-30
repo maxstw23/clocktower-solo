@@ -2,11 +2,13 @@
 import os
 import subprocess
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from botc.engine import Game  # noqa: E402
 from botc.human import TerminalIO  # noqa: E402
+from botc import rules  # noqa: E402
 from botc.public import Death, Public, Report  # noqa: E402
 from botc.worlds import Solver  # noqa: E402
 
@@ -230,6 +232,28 @@ def test_dead_soldier_needs_an_excuse():
     for w in Solver().worlds(pub):
         if w.roles[4] == "soldier":
             assert w.poison_nights == 1 and w.roles.count("poisoner") == 1
+
+
+def test_rulebook_truth_check():
+    # 6 players: seat 1 is the Imp, seat 3 the Spy, seat 4 the Recluse.
+    roles = ("empath", "imp", "chef", "spy", "recluse", "washerwoman")
+    view = SimpleNamespace(n=6, role_at=lambda s, t: roles[s], demon_at=lambda t: 1,
+                                 alive_after=lambda t: range(6), could_be=lambda s, r: roles[s] == r,
+                                 red_herring=None)
+
+    def truth(seat, kind, data):
+        return rules.truth(Report(seat, 1, kind, data), view)
+    assert truth(5, "washerwoman", (0, 2, "empath")) == rules.OK
+    assert truth(5, "washerwoman", (3, 2, "monk")) == rules.MISREG  # the Spy may show up as a Townsfolk
+    assert truth(5, "washerwoman", (2, 4, "monk")) == rules.FAIL
+    assert truth(0, "empath", (1,)) == rules.OK       # neighbours: seat 5 (good) and seat 1 (Imp)
+    assert truth(0, "fortune_teller", (2, 4, True)) == rules.MISREG  # the Recluse may read as the Demon
+    assert truth(0, "fortune_teller", (1, 2, False)) == rules.FAIL
+    # Real information is exactly the candidates that are true; a drunk never sees their own character.
+    real = [d for d in rules.candidates("washerwoman", 6, 5) if truth(5, "washerwoman", d) != rules.FAIL]
+    assert (0, 2, "empath") in real and (2, 4, "monk") not in real
+    assert rules.names_own_character("washerwoman", (0, 2, "washerwoman"))
+    assert not rules.names_own_character("washerwoman", (0, 2, "empath"))
 
 
 if __name__ == "__main__":
