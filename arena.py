@@ -30,6 +30,7 @@ def main():
     p.add_argument("--players", type=int, default=8)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--show", type=int, help="print this game of the batch in Chinese")
+    p.add_argument("--fast", action="store_true", help="skip the solver's soundness check (slow past 12 players)")
     p.add_argument("--reasoner", choices=("solver", "notebook"), default=agents.REASONER)
     args = p.parse_args()
     agents.REASONER = args.reasoner
@@ -37,7 +38,7 @@ def main():
     c = Counter()
     start = time.time()
     for i, seed in enumerate(range(args.seed, args.seed + args.games)):
-        g = Game(args.players, seed, out=None, check=True)
+        g = Game(args.players, seed, out=None, check=not args.fast)
         c["win_" + str(g.play())] += 1
         c["days"] += g.day
         execs = [d for d in g.pub.deaths if d.cause == "execution"]
