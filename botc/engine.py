@@ -87,6 +87,7 @@ class Game:
         self.virgin_planned = set()  # claimed Virgins someone already proposed testing
         self.offers = []           # players who offered today to be executed if there's no better choice
         self.accused_today = {}    # target -> [(speaker, reason in English)] said in public today
+        self.nominated_today = set()
         self.offered_ever = set()  # an AI player makes that offer once per game
         self.votes_left = 0        # during a vote: how many hands are still to come
         self.volunteer = None      # whose offer was taken up
@@ -992,6 +993,7 @@ class Game:
         await self.beat(M("phase_noms_title"), M("phase_noms_body"))
         await self._show_hint()
         nominated, nominators = set(), set()
+        self.nominated_today = nominated
         st = {"best": 0, "block": None, "tie": False}
         # A Virgin test the table agreed on goes first.
         plan, self.virgin_plan = self.virgin_plan, None

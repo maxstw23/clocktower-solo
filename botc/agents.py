@@ -49,6 +49,7 @@ class Profile:
     quiet_rate: float = 0.25  # good only: chance an info role keeps their character to private chats on day 1
     silence_cost: int = 15   # suspicion per night of info a claimed info role should have shared but didn't
     confide_at: int = 30     # good only: talk privately with (and confide in) players below this suspicion
+    foresight: bool = True   # holds a vote while someone clearly more suspicious hasn't been nominated yet
     depth: int = 2           # notebook reasoner: rounds of trust propagation (1 = info at face value)
     breadth: int = 4         # notebook reasoner: suspects their theories are built from
 
@@ -58,7 +59,7 @@ PROFILES = {
                       considers_misregistration=False, max_excuses=0,
                       nominate_at=30, vote_at=25, bandwagon=6, saint_caution=10, lookahead=1,
                       ft_split=False, vote_memory=5, story_check=0, considers_bluffs=False, hide_rate=0,
-                      confide_at=40, quiet_rate=0, silence_cost=8, depth=1, breadth=3),
+                      confide_at=40, quiet_rate=0, silence_cost=8, depth=1, breadth=3, foresight=False),
     "regular": Profile("regular", considers_misregistration=False, max_excuses=1, nominate_at=30),
     "veteran": Profile("veteran", max_excuses=3, nominate_at=35, vote_at=35, bandwagon=1, lookahead=6,
                        tests_virgin=True, vote_memory=20, story_check=2, hide_rate=0.3, reveal_day=3,
@@ -395,6 +396,12 @@ class GoodAgent(Agent):
         if block is not None and yes + 1 + game.votes_left < needed \
                 and self.suspicion(game, block) >= self.threshold(self.profile.vote_at, game):
             return False  # this vote can at best tie, which would save the player on the block
+        if self.profile.foresight and not ghost:
+            # Save the block for a clearly worse suspect who can still be nominated today.
+            bar = max(sus + 15, self.threshold(self.profile.nominate_at, game))
+            if any(x not in game.nominated_today and x not in (self.seat, nominee)
+                   and self.suspicion(game, x) >= bar for x in game.alive):
+                return False
         t = self.threshold(self.profile.vote_at, game) - self.profile.bandwagon * yes
         if game.pub.claims and game.pub.claims[nominee] == "saint":
             t = max(t + self.profile.saint_caution, 70 if endgame else 0)
