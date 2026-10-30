@@ -1,9 +1,11 @@
 """The Storyteller as a balance controller.
 
 Its only freedom is choosing among legal options (what a drunk or poisoned player sees, how the
-Spy and Recluse register). It picks the option that keeps the town's uncertainty about the Demon
-on a planned trajectory: wide early, narrowing to one candidate around the final day.
+Spy and Recluse register, the Mayor's bounce, the Demon's heir). It knows the grimoire, so it
+steers by how much the town suspects the real Demon: low early, near certain around the final day.
+It helps whichever side is behind that plan.
 """
+from math import log
 
 
 class Storyteller:
@@ -16,11 +18,23 @@ class Storyteller:
         """Desired effective number of Demon candidates; ~1 + days the game should still last."""
         return 1 + (len(game.alive) - 2) / 2
 
+    def goal(self, game):
+        """How much the town should suspect the real Demon by now: a fair guess among the
+        living on the first day, rising to near certain at the final three."""
+        return 1 / (len(game.alive) - 1)
+
+    def on_track(self, game, b):
+        """How the town's belief in the real Demon compares with the plan (1 = on plan, below 1 =
+        the town is further from the truth than planned). Uncertainty alone isn't enough: a town
+        that is sure of the wrong player is losing, however narrow its read."""
+        goal = self.goal(game)
+        found = b.demon[game.demon] / b.total if b.total else 0
+        return max(found, 0.01) / goal
+
     def helps(self, game):
         """Which side the Storyteller's discretion should favour now: the one that's behind."""
-        b = game.public_belief(game.forecast())
-        gap = b.candidates() - self.target(game)  # more candidates than planned: the town is lost
-        return "good" if gap > 0.5 else "evil" if gap < -0.5 else self.rng.choice(("good", "evil"))
+        r = self.on_track(game, game.public_belief(game.forecast()))
+        return "good" if r < 0.67 else "evil" if r > 1.5 else self.rng.choice(("good", "evil"))
 
     def pick_heir(self, game, heirs):
         """Several Minions could take over the Demon: the least suspected if evil is behind."""
@@ -41,5 +55,5 @@ class Storyteller:
         if len(options) == 1:
             return options[0]
         picks = self.rng.sample(options, min(self.sample, len(options)))
-        base, goal = game.forecast(), self.target(game)
-        return min(picks, key=lambda r: abs(game.public_belief(game.forecast(r), base).candidates() - goal))
+        base = game.forecast()
+        return min(picks, key=lambda r: abs(log(self.on_track(game, game.public_belief(game.forecast(r), base)))))

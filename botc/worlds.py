@@ -95,36 +95,42 @@ def liar_candidates(pub):
     return tuple(sorted(found))
 
 
-def structures(n, claims, liars=()):
-    """All starting role assignments allowed by the claims and the setup counts."""
+def placements(n):
+    """Every (Demon seat, Minion seats) a game of n can start with."""
+    mn = SETUP[n][2]
+    return [(demon, mins) for demon in range(n) for mins in combinations([s for s in range(n) if s != demon], mn)]
+
+
+def structures(n, claims, liars=(), where=None):
+    """All starting role assignments allowed by the claims and the setup counts, with the evil
+    team at any of `where` (Demon seat, Minion seats), or anywhere."""
     tf, out, mn, _ = SETUP[n]
     result = []
-    for demon in range(n):
-        for mins in combinations([s for s in range(n) if s != demon], mn):
-            good = [s for s in range(n) if s != demon and s not in mins]
-            for bluffer in [None] + [s for s in liars if s in good]:
-                honest = [s for s in good if claims[s] is not None and s != bluffer]
-                wild = [s for s in good if claims[s] is None or s == bluffer]
-                hclaims = [claims[s] for s in honest]
-                if any(is_evil(c) or c == "drunk" for c in hclaims) or len(set(hclaims)) < len(hclaims):
-                    continue
-                n_out = sum(KIND[c] == "outsider" for c in hclaims)
-                for mroles in permutations(MINIONS, mn):
-                    expected = out + 2 * ("baron" in mroles)
-                    for drunk in [None] + [s for s in honest if KIND[claims[s]] == "townsfolk"]:
-                        need = expected - n_out - (drunk is not None)  # Outsiders among unknown roles
-                        if not 0 <= need <= len(wild):
-                            continue
-                        for outs in combinations(wild, need):
-                            roles = list(claims)
-                            roles[demon] = "imp"
-                            for s, r in zip(mins, mroles):
-                                roles[s] = r
-                            for s in wild:
-                                roles[s] = "?outsider" if s in outs else "?townsfolk"
-                            if drunk is not None:
-                                roles[drunk] = "drunk"
-                            result.append(tuple(roles))
+    for demon, mins in where if where is not None else placements(n):
+        good = [s for s in range(n) if s != demon and s not in mins]
+        for bluffer in [None] + [s for s in liars if s in good]:
+            honest = [s for s in good if claims[s] is not None and s != bluffer]
+            wild = [s for s in good if claims[s] is None or s == bluffer]
+            hclaims = [claims[s] for s in honest]
+            if any(is_evil(c) or c == "drunk" for c in hclaims) or len(set(hclaims)) < len(hclaims):
+                continue
+            n_out = sum(KIND[c] == "outsider" for c in hclaims)
+            for mroles in permutations(MINIONS, mn):
+                expected = out + 2 * ("baron" in mroles)
+                for drunk in [None] + [s for s in honest if KIND[claims[s]] == "townsfolk"]:
+                    need = expected - n_out - (drunk is not None)  # Outsiders among unknown roles
+                    if not 0 <= need <= len(wild):
+                        continue
+                    for outs in combinations(wild, need):
+                        roles = list(claims)
+                        roles[demon] = "imp"
+                        for s, r in zip(mins, mroles):
+                            roles[s] = r
+                        for s in wild:
+                            roles[s] = "?outsider" if s in outs else "?townsfolk"
+                        if drunk is not None:
+                            roles[drunk] = "drunk"
+                        result.append(tuple(roles))
     return result
 
 
@@ -247,7 +253,6 @@ def _evaluate(roles, pub, allow_poison, allow_misreg, promos):
     # A peaceful night needs a reason: the Demon hit someone the Monk protected, or the Soldier,
     # or the Demon was poisoned. (The Demon always attacks in this version.)
     killed_on = {(d.tick + 1) // 2 for d in pub.deaths if d.cause == "night"}
-    imp = roles.index("imp")
     for night in range(2, pub.nights + 1):
         tick = night_tick(night)
         demon = demon_at(tick)

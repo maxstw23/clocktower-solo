@@ -14,7 +14,7 @@ from dataclasses import replace
 from itertools import combinations
 from types import SimpleNamespace
 
-from . import rules
+from . import agents, notebook, rules
 from .agents import PROFILES, REFERENCE, SPENT, EvilAgent, GoodAgent, believe
 from .human import HumanAgent, TerminalIO
 from .i18n import AbilityText, L, M, R, S, render
@@ -742,15 +742,35 @@ class Game:
         random.Random(f"lie-{self.seed}-{night}-{s}").shuffle(options)
         # Keeping a lie straight is a skill: drop lies that would break the liar's story, judged
         # against their own earlier claims (regular) or the whole record (veteran).
-        if agent.profile.story_check:
+        if agent.profile.story_check and agents.REASONER == "notebook":
+            # Like a person would: no new clash between me and what's been said (regular), and
+            # still some theory where I'm the honest character I claim (veteran).
+            before = notebook.clashes_with(s, base)
+            kept = [r for r in options if notebook.clashes_with(s, base.plus(r)) <= before]
+            if agent.profile.story_check >= 2:
+                kept = [r for r in kept if notebook.fits(base.plus(r), s, agent.profile.breadth)]
+            options = kept or options
+        elif agent.profile.story_check:
             view = base if agent.profile.story_check >= 2 else replace(
                 base, reports=tuple(r for r in base.reports if r.seat == s))
             before = self._story_cost(s, view)
             kept = [r for r in options
                     if before is None or (self._story_cost(s, view.plus(r), view) or 99) <= before]
             options = kept or options
+        if not options:
+            return None
+        if agents.REASONER == "notebook":
+            # No search over the town's reasoning: frame whoever the town already doubts most,
+            # or else give a harmless confirmation.
+            p = notebook.suspicions(base, None, agent.profile.depth)
+
+            def appeal(r):
+                framed = [x for x in range(self.n) if x not in self.team and rules.frames(
+                    r, lambda y, _: y == x)]
+                return max((p[x] for x in framed), default=0.3)
+            return max(options, key=appeal)
         options = options[:agent.profile.lookahead]
-        return min(options, key=lambda r: agent.exposure(self, base.plus(r), base)) if options else None
+        return min(options, key=lambda r: agent.exposure(self, base.plus(r), base))
 
     # --- the human's turn ----------------------------------------------------------------------
 

@@ -2,13 +2,14 @@
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from botc.engine import Game  # noqa: E402
 from botc.human import TerminalIO  # noqa: E402
-from botc import rules  # noqa: E402
+from botc import notebook, rules  # noqa: E402
 from botc.public import Death, Public, Report  # noqa: E402
 from botc.worlds import Solver  # noqa: E402
 
@@ -254,6 +255,20 @@ def test_rulebook_truth_check():
     assert (0, 2, "empath") in real and (2, 4, "monk") not in real
     assert rules.names_own_character("washerwoman", (0, 2, "washerwoman"))
     assert not rules.names_own_character("washerwoman", (0, 2, "empath"))
+
+
+def test_notebook_evidence_cuts_both_ways():
+    # 8 players. Seat 2 (Investigator) says seat 5 or 6 is the Poisoner; seat 5 then dies at night,
+    # so seat 5 looks good and the accusation falls back on seat 2.
+    claims = ("empath", "chef", "investigator", "monk", "soldier", "slayer", "mayor", "virgin")
+    pub = Public(8, claims, reports=(Report(2, 1, "investigator", (5, 6, "poisoner")),))
+    before = notebook.suspicions(pub, depth=3)
+    after = notebook.suspicions(replace(pub, deaths=(Death(5, 3, "night"),)), depth=3)
+    assert before[6] > before[0] and after[5] < before[5] and after[2] > before[2]
+    # Empath 0: both neighbours look good.
+    pub = Public(8, claims, reports=(Report(0, 1, "empath", (0,)),))
+    p = notebook.suspicions(pub, depth=2)
+    assert p[1] < p[3] and p[7] < p[3]
 
 
 if __name__ == "__main__":

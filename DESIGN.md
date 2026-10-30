@@ -15,6 +15,7 @@ deterministic given a hidden seed, with no LLM in the game state.
 | Layer | File | Role |
 |---|---|---|
 | Script | `roles.py` | Trouble Brewing roles, setup counts |
+| Notebook reasoner | `notebook.py` | How a person reads the table: evidence, trust, clashes, a few theories (replacing the solver in play, in progress) |
 | Rulebook | `rules.py` | Characters as data; the truth check and possible outputs for each information category (shared by engine, solver and, later, every player) |
 | Public record | `public.py` | Claims, reported info, deaths, Slayer shots, first nominations. Immutable and hashable. |
 | World solver | `worlds.py` | Every starting role assignment consistent with the record (the omniscient baseline) |
@@ -128,10 +129,12 @@ kill, and a Poisoner executed by day can't explain later info. The Storyteller a
 in wake order, so later info is chosen knowing what earlier info will say.
 
 **Storyteller as controller.** Its only freedom is what it already has in the real game: info
-for drunk/poisoned players and Spy/Recluse registrations. For each such decision it samples up to
-6 legal options and picks the one that keeps the town's effective number of Demon candidates
-(inverse Simpson index over the reference model's worlds) closest to `1 + (alive - 2) / 2`, so
-certainty should arrive around the final day.
+for drunk/poisoned players, Spy/Recluse registrations, the Mayor's bounce and the Demon's heir.
+It knows the grimoire, so it steers by how much the town suspects the *real* Demon (a town that is
+sure of the wrong player is losing, however narrow its read): the plan is a fair guess among the
+living (`1 / (alive - 1)`). For each decision it samples up to 6 legal options and picks the one
+that keeps the town closest to the plan; for the Mayor, heir and registrations it helps whichever
+side is behind.
 
 ## Findings so far
 
@@ -285,7 +288,16 @@ star-pass heir) to help the side that is behind.
    truth stayed among the solver's worlds in every game.
 2. Notebook, trust propagation and clashes for good players, behind the existing tests; compare
    in the arena against the solver referee (discrimination, execution accuracy, win rates at 5,
-   8, 10, 12, 15 players).
+   8, 10, 12, 15 players). **In progress** (`notebook.py`, `agents.REASONER = "notebook"`,
+   `arena.py --reasoner notebook`). Evidence cuts both ways: an accuser of someone who looks good,
+   or a voucher for someone who looks evil, takes part of the blame; that alone raised day-1
+   reads from chance to about double it. Evil liars in this mode check their lies like people
+   (no new clash with what's public; veterans: some theory still has them honest) and pick lies
+   by pattern (frame whoever the town already doubts, else a harmless confirmation) instead of
+   searching the town's reasoning. 100 games at 8 players: executions hit evil 43% (solver 35%),
+   58s (solver 81s, both including the soundness check). Balance is off: good wins 69/100 at 8
+   players but about 50% at 10 (20 games), where three evil players' coordinated fakes still
+   beat day-1 reads.
 3. Theories and decisions; then evil on the same notebook; then the Storyteller.
 4. Remove the solver from play; keep it for the arena.
 5. Add one character from another script to prove the design extends.

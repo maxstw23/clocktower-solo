@@ -7,6 +7,7 @@ import argparse
 import time
 from collections import Counter
 
+from botc import agents
 from botc.engine import Game
 
 INFO = ("washerwoman", "librarian", "investigator", "chef", "empath", "fortune_teller", "undertaker", "ravenkeeper")
@@ -29,7 +30,9 @@ def main():
     p.add_argument("--players", type=int, default=8)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--show", type=int, help="print this game of the batch in Chinese")
+    p.add_argument("--reasoner", choices=("solver", "notebook"), default=agents.REASONER)
     args = p.parse_args()
+    agents.REASONER = args.reasoner
 
     c = Counter()
     start = time.time()

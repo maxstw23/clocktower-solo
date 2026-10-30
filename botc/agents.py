@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from itertools import combinations
 
+from . import notebook
 from .i18n import M, R, S
 from .roles import KIND, is_evil
 from .worlds import Belief, tally
@@ -47,6 +48,8 @@ class Profile:
     quiet_rate: float = 0.25  # good only: chance an info role keeps their character to private chats on day 1
     silence_cost: int = 15   # suspicion per night of info a claimed info role should have shared but didn't
     confide_at: int = 30     # good only: talk privately with (and confide in) players below this suspicion
+    depth: int = 2           # notebook reasoner: rounds of trust propagation (1 = info at face value)
+    breadth: int = 4         # notebook reasoner: suspects their theories are built from
 
 
 PROFILES = {
@@ -54,20 +57,25 @@ PROFILES = {
                       considers_misregistration=False, max_excuses=0,
                       nominate_at=30, vote_at=25, bandwagon=6, saint_caution=10, lookahead=1,
                       ft_split=False, vote_memory=5, story_check=0, considers_bluffs=False, hide_rate=0,
-                      confide_at=40, quiet_rate=0, silence_cost=8),
+                      confide_at=40, quiet_rate=0, silence_cost=8, depth=1, breadth=3),
     "regular": Profile("regular", considers_misregistration=False, max_excuses=1, nominate_at=30),
     "veteran": Profile("veteran", max_excuses=3, nominate_at=35, vote_at=35, bandwagon=1, lookahead=6,
                        tests_virgin=True, vote_memory=20, story_check=2, hide_rate=0.3, reveal_day=3,
-                       confide_at=20, quiet_rate=0.35, silence_cost=20),
+                       confide_at=20, quiet_rate=0.35, silence_cost=20, depth=3, breadth=6),
 }
 # How "the town" reads the record; used by the Storyteller.
 REFERENCE = Profile("reference")
+
+
+REASONER = "solver"  # or "notebook" (see notebook.py); switching over is in progress
 
 
 def believe(solver, pub, profile, seat=None, base=None):
     """Tally the worlds a player with this profile considers. Widens assumptions if none fit."""
     if not pub.claims:
         return Belief.empty(pub.n)
+    if REASONER == "notebook":
+        return notebook.believe(pub, seat, depth=profile.depth, breadth=profile.breadth)
     p, m, dr, bl = (profile.considers_poison, profile.considers_misregistration, profile.considers_drunk,
                     profile.considers_bluffs)
     steps = ((p, m, dr, bl, profile.max_excuses), (p, m, dr, bl, 99), (True, True, True, True, 99))
