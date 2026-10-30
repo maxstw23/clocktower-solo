@@ -35,6 +35,7 @@ EVIL_CLAIM = 3.0      # claims an evil character
 CHANGED = 0.5         # per claim change
 CLASH = 2.0           # blame shared among a clash, by how little each member is trusted
 SHOT_MISSED = -0.3    # a Slayer shot that did nothing: not the Demon
+BUDGET = 400          # role assignments a player checks per suspect they consider (attention)
 
 
 @dataclass(frozen=True)
@@ -173,11 +174,25 @@ def believe(pub, seat=None, role=None, depth=2, breadth=4):
     mn = SETUP[n][2]
     others = sorted((s for s in range(n) if s != seat), key=lambda s: (-p[s], s))
     relaxed = False
+    liars = liar_candidates(pub)
+
+    def odds(seats):
+        out = 1.0
+        for s in seats:
+            out *= p[s] / max(1e-6, 1 - p[s])
+        return out
     for k in (max(breadth, mn + 1), max(breadth, mn + 1) + 3):
         top = others[:k]
         where = [(d, mins) for d in top for mins in combinations([x for x in top if x != d], mn)]
-        worlds = [w for roles in structures(n, pub.claims, liar_candidates(pub), where)
-                  for w in evaluate(roles, pub) if seat is None or not is_evil(w.roles[seat])]
+        # Attention is limited: think through the likeliest line-ups first, until the budget is spent.
+        where.sort(key=lambda dm: -odds((dm[0], *dm[1])))
+        worlds, spent = [], 0
+        for dm in where:
+            if spent >= BUDGET * breadth and worlds:
+                break
+            for roles in structures(n, pub.claims, liars, [dm]):
+                spent += 1
+                worlds += [w for w in evaluate(roles, pub) if seat is None or not is_evil(w.roles[seat])]
         if worlds:
             break
         relaxed = True
@@ -186,13 +201,9 @@ def believe(pub, seat=None, role=None, depth=2, breadth=4):
         return Belief(1.0, tuple(p.get(s, 0) / total for s in range(n)), tuple(p.get(s, 0) for s in range(n)), True)
     # A theory is as plausible as it is consistent with the rules, times how its suspects look.
     # (Measured: counting each way a theory can be explained beats scoring it by its best one.)
-    weighted = []
-    for w in worlds:
-        odds = 1.0
-        for s, r in enumerate(w.roles):
-            if is_evil(r) and s != seat:
-                odds *= p[s] / max(1e-6, 1 - p[s])
-        weighted.append(SimpleNamespace(roles=w.roles, demon=w.demon, weight=w.weight * odds))
+    weighted = [SimpleNamespace(roles=w.roles, demon=w.demon,
+                                weight=w.weight * odds(s for s, r in enumerate(w.roles) if is_evil(r) and s != seat))
+                for w in worlds]
     t = tally(n, weighted, relaxed)
     if not t.total:
         return t
