@@ -163,6 +163,9 @@ class Agent:
             if r.seat == target or b.evil_pct(r.seat) >= 30:
                 continue
             mine = r.seat == self.seat
+            if r not in game.pub.reports and (r.kind in ("fortune_teller", "investigator")) \
+                    and target in r.data[:2]:
+                return M("r_hidden") if mine else M("r_private")
             if r.kind == "fortune_teller" and r.data[2] and target in r.data[:2]:
                 return M("r_ft_mine") if mine else M("r_ft", x=S(r.seat))
             if r.kind == "investigator" and r.data[0] is not None and target in r.data[:2]:
@@ -177,6 +180,14 @@ class Agent:
             return M("r_demon_pct", pct=b.demon_pct(target))
         return M("r_nothing", v=self.seat * 3 + target)
 
+
+    def hidden_source(self, game, src, why=None):
+        """Don't out a hidden info role: evidence that is only known in private is cited as such."""
+        if src is None or why not in (None, "empath", "named_evil", "fortune_teller"):
+            return None
+        if any(r.seat == src for r in game.pub.reports):
+            return None
+        return M("r_hidden") if src == self.seat else M("r_private")
 
     def notebook_reason(self, game, target):
         """The notebook line that weighs most against `target`, as something to say."""
@@ -200,6 +211,9 @@ class Agent:
         src = item.source
         who = M("my") if src == self.seat else M("whose", x=S(src)) if src is not None else None
         r = next((r for r in pub.reports if r.seat == src and target in r.data[:-1]), None) if src is not None else None
+        hidden = self.hidden_source(game, src, item.why)
+        if hidden is not None:
+            return hidden
         if item.why == "empath":
             r = next((r for r in reversed(pub.reports) if r.seat == src and r.kind == "empath" and r.data[0]), None)
             return M("r_empath", whose=who, k=r.data[0]) if r else None
