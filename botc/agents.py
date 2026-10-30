@@ -294,6 +294,9 @@ class GoodAgent(Agent):
             return fakes[0]  # call out whoever claims my character
         top = self.rank(cands, lambda s: -self.suspicion(game, s))[0]
         sus = self.suspicion(game, top)
+        block = game.on_block
+        if block is not None and sus <= self.suspicion(game, block) + (20 if len(game.alive) <= 4 else 5):
+            return None  # I wouldn't vote to replace who's on the block
         # Someone who stands out from the rest is worth nominating even when nobody looks very bad.
         others = [self.suspicion(game, s) for s in game.alive if s not in (self.seat, top)]
         stands_out = bool(others) and sus >= 20 and sus >= sum(others) / len(others) + 15

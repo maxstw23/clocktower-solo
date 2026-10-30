@@ -51,6 +51,7 @@ class Game:
         self.step = step       # step() -> True: wait for the human to tap after each line
         self.speaking = None   # seat currently speaking, while paced
         self.log = []          # every line said, in order: dicts with m, private, chat, speaker
+        self.on_block = None   # who is about to be executed while nominations go round
         self.suggest = {}      # evil human's suggestions to AI teammates: "kill"/"poison" -> seat
         self.replied = set()   # (day, seat): already answered an accusation today
         self.countered = set()  # (real holder, false claimer): already called out
@@ -997,6 +998,7 @@ class Game:
             for s in order:
                 if s in self.dead or s in nominators:
                     continue
+                self.on_block = None if st["tie"] else st["block"]
                 t = await self.ask(self.agents[s].nominate(self, nominated))
                 if t is None:
                     continue
