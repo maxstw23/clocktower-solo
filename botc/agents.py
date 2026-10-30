@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from itertools import combinations
 
 from . import notebook
-from .i18n import M, R, S
+from .i18n import L, M, R, S
+from .public import day_tick
 from .roles import KIND, is_evil
 from .worlds import Belief, tally
 
@@ -101,6 +102,13 @@ VALUE = {"fortune_teller": 5, "empath": 5, "undertaker": 4, "monk": 3, "slayer":
          "ravenkeeper": 1}
 
 
+def pushed(game, v, s):
+    """Whether `s` pushed this vote's nominee to the block: the nominator, or a voter when the vote
+    wasn't close to unanimous (when nearly everyone voted, it tells you nothing about anyone)."""
+    alive = game.n - sum(d.tick < day_tick(v.day) for d in game.pub.deaths)
+    return s == v.nominator or (s in v.voters and len(v.voters) < 0.7 * alive)
+
+
 class Agent:
     """Good and evil players draw from the same profiles: the same blind spots, dials and skill."""
 
@@ -145,8 +153,12 @@ class Agent:
             return M("r_changed", old=R(first), new=R(claim))
         for v in reversed(pub.votes):
             if game.executed_on(v.day) == v.nominee and b.evil_pct(v.nominee) < 30 \
-                    and target in (v.nominator, *v.voters):
+                    and pushed(game, v, target):
                 return M("r_pushed", x=S(v.nominee))
+        if REASONER == "notebook":
+            why = self.notebook_reason(game, target)
+            if why is not None:
+                return why
         for r in reversed(pub.reports):
             if r.seat == target or b.evil_pct(r.seat) >= 30:
                 continue
@@ -164,6 +176,40 @@ class Agent:
         if b.demon_pct(target) >= 40:
             return M("r_demon_pct", pct=b.demon_pct(target))
         return M("r_nothing", v=self.seat * 3 + target)
+
+
+    def notebook_reason(self, game, target):
+        """The notebook line that weighs most against `target`, as something to say."""
+        mine = hasattr(self, "role")
+        pub = game.view_of(self) if mine else game.record_for(self.seat)
+        found = notebook.reasons(pub, target, self.seat if mine else None, self.profile.depth)
+        if not found or found[0][0] < 0.5:
+            return None
+        _, item, how = found[0]
+        if how == "clash":
+            others = [s for s in item.seats if s not in (target, self.seat)]
+            if item.why == "virgin_silent":
+                return M("r_clash_virgin", x=M("me") if self.seat in item.seats else S(others[0]))
+            if self.seat in item.seats:
+                return M("r_clash_me")
+            return M("r_clash", x=L((S(x) for x in others), conj=True))
+        if how in ("accused_good", "vouched_evil"):
+            if item.target == self.seat:
+                return M("r_accused_me") if how == "accused_good" else None
+            return M("r_" + how, x=S(item.target))
+        src = item.source
+        who = M("my") if src == self.seat else M("whose", x=S(src)) if src is not None else None
+        r = next((r for r in pub.reports if r.seat == src and target in r.data[:-1]), None) if src is not None else None
+        if item.why == "empath":
+            r = next((r for r in reversed(pub.reports) if r.seat == src and r.kind == "empath" and r.data[0]), None)
+            return M("r_empath", whose=who, k=r.data[0]) if r else None
+        if item.why == "named_evil" and r is not None:
+            if r.kind == "investigator":
+                return M("r_inv_mine", role=R(r.data[2])) if src == self.seat else M("r_inv", x=S(src), role=R(r.data[2]))
+            return M("r_named", whose=who, kind=R(r.kind), role=R(r.data[1]))
+        if item.why == "fortune_teller" and r is not None:
+            return M("r_ft_mine") if src == self.seat else M("r_ft", x=S(src))
+        return None
 
 
 class GoodAgent(Agent):
@@ -256,7 +302,7 @@ class GoodAgent(Agent):
         grudge = 0
         for v in game.known.votes:
             if v.nominee != s and game.executed_on(v.day) == v.nominee and b.evil_pct(v.nominee) < 30 \
-                    and (s == v.nominator or s in v.voters):
+                    and pushed(game, v, s):
                 grudge += self.profile.vote_memory
         if s in self.impostors(game):
             grudge += 60  # they claim my character

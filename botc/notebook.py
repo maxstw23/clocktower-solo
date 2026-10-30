@@ -165,6 +165,29 @@ def suspicions(pub, seat=None, depth=2):
     return p
 
 
+def reasons(pub, target, seat=None, depth=2):
+    """What in the notebook weighs most against `target`, strongest first: (weight, note or clash,
+    how it counts: "evidence" | "accused_good" | "vouched_evil" | "clash")."""
+    notes, clashes = notebook(pub)
+    p = suspicions(pub, seat, depth)
+    out = []
+    for note in notes:
+        src = note.source
+        if note.target == target and src != target and note.weight > 0:
+            trust = 1.0 if src is None or src == seat else 1 - p[src]
+            out.append((note.weight * trust, note, "evidence"))
+        elif src == target and note.target != target:
+            wrong = 1 - p[note.target] if note.weight > 0 else p[note.target]
+            out.append((abs(note.weight) * note.back * wrong, note,
+                        "accused_good" if note.weight > 0 else "vouched_evil"))
+    for c in clashes:
+        if target in c.seats:
+            total = sum(p[s] for s in c.seats)
+            if total > 0:
+                out.append((CLASH * p[target] / total, c, "clash"))
+    return sorted(out, key=lambda x: -x[0])
+
+
 def believe(pub, seat=None, role=None, depth=2, breadth=4):
     """A Belief (same shape as the world solver's) from a notebook read and a few theories."""
     n = pub.n
