@@ -31,6 +31,33 @@ BLUFF_ORDER = ("washerwoman", "librarian", "investigator", "chef", "undertaker",
                "fortune_teller", "soldier", "mayor", "ravenkeeper", "virgin", "slayer")
 
 
+def _gist(m, speaker):
+    """What a message says, whoever says it ("my info" from Eli = "Eli's info"), for comparing."""
+    if isinstance(m, M):
+        if m.key == "my":
+            return ("whose", speaker)
+        if m.key == "whose":
+            return ("whose", m.args["x"].seat)
+        if m.key.endswith("_mine"):  # "my Investigator info" = "<speaker>'s Investigator info"
+            return _gist(M(m.key[:-5], x=S(speaker), **m.args), speaker)
+        return (m.key, tuple(sorted((k, _gist(v, speaker)) for k, v in m.args.items())))
+    if isinstance(m, S):
+        return ("seat", m.seat)
+    if isinstance(m, L):
+        return ("list", tuple(_gist(x, speaker) for x in m.items))
+    if isinstance(m, R):
+        return ("role", m.role)
+    return m
+
+
+def _flat(g):
+    """Every part of a gist."""
+    yield g
+    if isinstance(g, tuple):
+        for x in g:
+            yield from _flat(x)
+
+
 class Game:
     def __init__(self, players=10, seed=0, mix=("novice", "regular", "veteran"), out=print, check=False,
                  human=None, io=None, hints=False, name=None, lang="en", pace=None, step=None):
@@ -59,6 +86,7 @@ class Game:
         self.virgin_plan = None    # (tester, virgin) agreed for today's first nomination
         self.virgin_planned = set()  # claimed Virgins someone already proposed testing
         self.offers = []           # players who offered today to be executed if there's no better choice
+        self.accused_today = {}    # target -> [(speaker, reason in English)] said in public today
         self.offered_ever = set()  # an AI player makes that offer once per game
         self.votes_left = 0        # during a vote: how many hands are still to come
         self.volunteer = None      # whose offer was taken up
@@ -431,6 +459,7 @@ class Game:
         self.suggest = {}
         self.offers = []
         self.volunteer = None
+        self.accused_today = {}  # target -> [(speaker, reason in English)] said in public today
         self.pub = replace(self.pub, nights=self.night)
         self.phase = "dawn"
         await self.say(M("day_header", d=self.day))
@@ -667,8 +696,7 @@ class Game:
         await self._offer(s)
         said = self.agents[s].statement(self)
         if said:
-            await self.speech(s, self.m("suspect", t=S(said[0]), why=said[1]))
-            await self._reply(said[0])
+            await self._accuse(s, *said)
 
     async def _speak(self, s, accuse=True):
         if s == self.human:
@@ -702,9 +730,24 @@ class Game:
             await self._offer(s)
         said = agent.statement(self) if accuse else None
         if said:
-            t, why = said
-            await self.speech(s, self.m("suspect", t=S(t), why=why))
-            await self._reply(t)
+            await self._accuse(s, *said)
+
+    async def _accuse(self, s, t, why):
+        """Say whom you suspect and why, without parroting: agree with whoever already gave the same
+        reason today, or add a new reason to theirs."""
+        reason = _gist(why, s)
+        before = self.accused_today.setdefault(t, [])
+        same = next((x for x, r in before if r == reason), None)
+        own = ("whose", s) in _flat(reason) or ("seat", s) in _flat(reason)
+        if same is not None:
+            line = self.m("own_info", why=why) if own else self.m("agree", x=S(same), t=S(t))
+        elif before:
+            line = self.m("suspect_too", t=S(t), why=why)
+        else:
+            line = self.m("suspect", t=S(t), why=why)
+        before.append((s, reason))
+        await self.speech(s, line)
+        await self._reply(t)
 
     async def _reply(self, t):
         """An accused AI player answers back, once a day."""
