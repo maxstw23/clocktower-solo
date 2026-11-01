@@ -16,6 +16,7 @@ deterministic given a hidden seed, with no LLM in the game state.
 |---|---|---|
 | Script | `roles.py` | Trouble Brewing roles, setup counts |
 | Notebook reasoner | `notebook.py` | How a person reads the table: evidence, trust, clashes, a few theories (replacing the solver in play, in progress) |
+| Table talk | `story.py` | Arguments told as stories from the timeline ("X did A. Then B. So C.") and logical defences |
 | Rulebook | `rules.py` | Characters as data; the truth check and possible outputs for each information category (shared by engine, solver and, later, every player) |
 | Public record | `public.py` | Claims, reported info, deaths, Slayer shots, first nominations. Immutable and hashable. |
 | World solver | `worlds.py` | Every starting role assignment consistent with the record (the omniscient baseline) |
@@ -278,6 +279,24 @@ The Storyteller knows the grimoire, so it needs no solver. It balances by how mu
 notebooks suspect the real Demon against a planned trajectory (low early, near certain around the
 final day), and uses its existing freedoms (drunk and poisoned info, registrations, Mayor bounce,
 star-pass heir) to help the side that is behind.
+
+### Table talk as stories (`story.py`)
+
+People argue with a timeline: who did or said what, but then what happened, so what follows. A
+`Chain` message joins clauses with but / then / and / so in either language. Story shapes, each
+built from the speaker's notebook and the public record (never from what was heard in private):
+fulfilled (information pointed at X, then the Demon killed its source), targeted (X went after
+someone who turned out good), clash, said-but-didn't-vote, Outsider count, and elimination ("A
+and B were cleared by my Empath reading, C was confirmed by D; only X has nobody to back them
+up, and the others at least confirmed someone"). A second line of evidence is added as one
+sentence. Defences: a confirmation, "not just me" for a pair, a Baron for extra Outsiders, an
+Undertaker with nothing to learn yet, promised information, a counter-accusation, standing by an
+offer to be executed. Players don't parrot: steps someone already went through are skipped ("I
+won't repeat what X said"), the owner of cited information says so, and a nominator who already
+argued says "as I said". Commitments hold: you vote for your own nomination and for whom you said
+today you suspect. What a trusted player says sways listeners (`herding`: novice 8, veteran 2).
+The human, when accusing, picks one of the cases their own notebook supports. Skill dial
+`story`: novice 1 step (a one-line reason), regular 3, veteran 4. No percentages anywhere.
 
 ### Migration
 
