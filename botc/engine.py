@@ -892,7 +892,14 @@ class Game:
             elif act == "accuse":
                 t = await io.seat(M("q_whom_suspect"), [s for s in self.alive if s != h])
                 if t is not None:
-                    await self.speech(h, M("suspect_plain", t=S(t)))
+                    # Offer the cases the human's own notebook supports, or just the name.
+                    cases = Teller(self, agent).options(t)
+                    pick = await io.choose(M("q_why", t=S(t)), [M("said_suspect", text=c) for c in cases]
+                                           + [M("a_plain", t=S(t))], default=0) if cases else len(cases)
+                    if pick < len(cases):
+                        await self.speech(h, self.suspect_line(h, t, cases[pick]))
+                    else:
+                        await self.speech(h, M("suspect_plain", t=S(t)))
                     self.accusations.append((self.day, h, t))
                     await self._reply(t, h)
             elif act == "offer":

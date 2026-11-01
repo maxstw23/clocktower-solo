@@ -52,6 +52,7 @@ class Profile:
     confide_at: int = 30     # good only: talk privately with (and confide in) players below this suspicion
     foresight: bool = True   # holds a vote while someone clearly more suspicious hasn't been nominated yet
     story: int = 3           # steps of an argument they can string together ("X did A. But B. So C.")
+    herding: int = 4         # suspicion added per trusted player who publicly accuses someone
     depth: int = 2           # notebook reasoner: rounds of trust propagation (1 = info at face value)
     breadth: int = 4         # notebook reasoner: suspects their theories are built from
 
@@ -61,11 +62,11 @@ PROFILES = {
                       considers_misregistration=False, max_excuses=0,
                       nominate_at=30, vote_at=25, bandwagon=6, saint_caution=10, lookahead=1,
                       ft_split=False, vote_memory=5, story_check=0, considers_bluffs=False, hide_rate=0,
-                      confide_at=40, quiet_rate=0, silence_cost=8, depth=1, breadth=3, foresight=False, story=1),
+                      confide_at=40, quiet_rate=0, silence_cost=8, depth=1, breadth=3, foresight=False, story=1, herding=8),
     "regular": Profile("regular", considers_misregistration=False, max_excuses=1, nominate_at=30),
     "veteran": Profile("veteran", max_excuses=3, nominate_at=35, vote_at=35, bandwagon=1, lookahead=6,
                        tests_virgin=True, vote_memory=20, story_check=2, hide_rate=0.3, reveal_day=3,
-                       confide_at=20, quiet_rate=0.35, silence_cost=20, depth=3, breadth=6, story=4),
+                       confide_at=20, quiet_rate=0.35, silence_cost=20, depth=3, breadth=6, story=4, herding=2),
 }
 # How "the town" reads the record; used by the Storyteller.
 REFERENCE = Profile("reference")
@@ -329,7 +330,12 @@ class GoodAgent(Agent):
         if s in self.impostors(game):
             grudge += 60  # they claim my character
         grudge += self.profile.silence_cost * len(game.silent_nights(s))
-        return min(100, b.suspicion(s) + grudge)
+        # Being swayed by what others say in public, as much as I trust whoever says it.
+        herd = 0.0
+        for day, speaker, t in game.accusations:
+            if t == s and speaker not in (self.seat, s):
+                herd += self.profile.herding * (1 - b.evil_pct(speaker) / 100) * (1 if day == game.day else 0.5)
+        return min(100, b.suspicion(s) + grudge + min(int(herd), 3 * self.profile.herding))
 
     def hard_case(self, game, s):
         """Evidence alone (no grudges about votes) makes `s` very likely evil."""

@@ -265,6 +265,18 @@ class Teller:
         steps = steps[:max_steps]
         return Chain(steps) if len(steps) >= 2 else None
 
+    def options(self, target, max_steps=4, k=3):
+        """A few different cases against `target`, for the human to pick from."""
+        best = {}
+        for kind, shape in (("fulfilled", self.fulfilled), ("targeted", self.targeted), ("clash", self.clashing),
+                            ("no_vote", self.no_vote), ("outsiders", self.outsiders),
+                            ("elimination", self.elimination)):
+            for w, steps in shape(target):
+                if kind not in best or w > best[kind][0]:
+                    best[kind] = (w, steps)
+        ranked = sorted(best.values(), key=lambda x: -x[0])[:k]
+        return [Chain(steps[:max_steps]) for _, steps in ranked]
+
     def summary(self, kind, steps, target):
         """One clause standing for a whole story, to add as supporting evidence."""
         if kind == "outsiders":
