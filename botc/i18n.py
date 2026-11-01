@@ -51,6 +51,28 @@ class L:
         self.items, self.conj, self.paren = list(items), conj, paren
 
 
+class Chain:
+    """A spoken argument: clauses joined by connectives into a few sentences, like
+    "X did A. But B. Then on day 2, C. So I suspect X." `steps` are (link, message) pairs; link is
+    None, "but", "then", "and" or "so"."""
+    __slots__ = ("steps",)
+
+    def __init__(self, steps=()):
+        self.steps = tuple(steps)
+
+    def plus(self, link, m):
+        return Chain(self.steps + ((link, m),))
+
+    def __len__(self):
+        return len(self.steps)
+
+
+LINKS = {
+    "en": {"but": "but ", "then": "then ", "and": "and ", "so": "so "},
+    "zh": {"but": "但是", "then": "结果", "and": "而且", "so": "所以"},
+}
+
+
 ROLE_NAMES = {
     "en": {
         "washerwoman": "Washerwoman", "librarian": "Librarian", "investigator": "Investigator", "chef": "Chef",
@@ -186,6 +208,8 @@ TEXT = {
         "report_monk": "On night {n} I protected {a}.",
         "suspect": ["I suspect {t}: {why}.", "My money's on {t}: {why}.", "Keep an eye on {t}: {why}."],
         "suspect_plain": "I suspect {t}.",
+        "own_story": ["That's right: what {x} said is my information. So I suspect {t} too.",
+                      "Yes, {x} has it right, that's what I learned. {t} it is."],
         "own_info": ["That's right, it's my info: {why}.", "Yes, and I stand by it: {why}."],
         "agree": ["I agree with {x} about {t}.", "Same as {x}: {t} worries me too.", "{x} is right about {t}."],
         "suspect_too": ["I suspect {t} too, and not only for that: {why}.", "{t} for me as well: {why}.",
@@ -258,7 +282,64 @@ TEXT = {
         "r_inv": "{x}'s Investigator ping says they might be the {role}",
         "r_ft_mine": "my Fortune Teller got a YES on them",
         "r_inv_mine": "my Investigator ping says they might be the {role}",
-        "r_ifinfo": "if {whose} info is right, they're evil in {pct}% of the setups that fit",
+        "r_ifinfo": "if {whose} info is right, they're probably evil",
+        # --- arguments told as a story (story.py): each is one clause of a Chain ---
+        "i": "I",
+        "st_ft": "{x} checked {a} and {b} with the Fortune Teller on night {n} and got a YES",
+        "st_ping": "{x} learned on night {n} that {a} or {b} is the {role}",
+        "st_named": "{x} learned on night {n} that {a} was the {role}",
+        "st_empath": "{x} read {k} evil neighbour(s) on night {n}, and {t} is one of those neighbours",
+        "st_killed": "on night {n}, {x} was killed",
+        "st_feared": "the Demon was afraid of them, so their information is probably true",
+        "st_one_of": "one of {a} and {b} is the problem",
+        "st_other_confirmed": "{o} was confirmed by {y}'s information",
+        "st_other_dead": "{o} has already been killed at night, so {o} was good",
+        "st_other_trusted": "I trust {o} more",
+        "st_not_me": "and I know I'm good",
+        "st_cleared_by": "{x} was confirmed by {y}'s information",
+        "st_cleared_empath": "{x} was cleared by {y}'s Empath reading",
+        "st_cleared_ft": "{x} got a NO from {y}'s Fortune Teller",
+        "st_cleared_virgin": "{x} was proven by the Virgin",
+        "st_only": "only {t}'s claim has nobody to back it up",
+        "st_only_some": "only {list} have nobody to back them up",
+        "st_helped": "{list} at least confirmed someone else with their information; {t} hasn't",
+        "st_unverified": "and nothing {t} has said as the {role} can be checked yet",
+        "st_as_said": "I won't repeat what {x} just went through",
+        "st_outsider_short": "{t} claims an Outsider too, and there are already more Outsiders than this game should have",
+        "st_targeted_short": "{t} went after {x}, who turned out to be good",
+        "d_baron": "the extra Outsiders could just mean there's a Baron, and then every Outsider claim can be true",
+        "st_nominated": "on day {d}, {t} nominated {x}",
+        "st_accused": "on day {d}, {t} pointed the finger at {x}",
+        "st_good_now": "{x} looks good now",
+        "st_claims": "{t} says they're the {role}",
+        "st_clash_double": "{x} claims the {role} too, and they can't both be telling the truth",
+        "st_clash": "that doesn't fit what {x} said, so one of them isn't telling the truth",
+        "st_clash_me": "that doesn't fit what I know, and I know I'm telling the truth",
+        "st_trust_x": "{x}'s story has held up better",
+        "st_virgin": "on day {d}, {a} nominated {t}, the claimed Virgin, and nothing happened",
+        "st_one_lies": "so one of them isn't what they say",
+        "st_no_vote": "on day {d}, {t} said they suspected {x}, but didn't vote when {x} was nominated",
+        "st_outsiders": "{k} of us claim Outsiders, more than this game should have",
+        "st_outsiders_why": "either there's a Baron, or some of those claims are lies",
+        "st_clash_short": "what {t} and {x} say doesn't fit together either",
+        "st_clash_short_me": "what {t} says doesn't fit what I know, either",
+        "st_no_outsiders": "a game this size has no Outsiders, yet {t} claims the {role}",
+        "c_suspect": ["I suspect {t}", "my eyes are on {t}", "{t} is my pick"],
+        "c_nominate": "I nominate {t}",
+        "c_vote": "I'm voting for {t} today",
+        "d_split": "the YES was on {a} and {b}, not just me",
+        "d_split_ping": "{x}'s information was about {a} or {b}, not just me",
+        "d_red_herring": "and the Fortune Teller has a red herring: a good player who reads as the Demon",
+        "d_confirmed": "{x}'s information on night {n} already confirmed me as the {role}",
+        "d_no_exec": "nobody has been executed yet, so as the Undertaker I've had nothing to learn",
+        "d_promise_ut": "execute {o} today and I'll tell you their character tomorrow",
+        "d_promise_ut_any": "keep me, execute someone more suspicious, and tomorrow I'll tell you what they were",
+        "d_promise": "keep me alive and I'll have new information tomorrow",
+        "d_counter": "if anything, look at {x}: {why}",
+        "d_offer": "I said you could execute me, and if there's no better choice I'll accept it",
+        "d_better": "but I think {x} is a better choice",
+        "d_claim": "I'm the {role}",
+        "d_good": "I'm good",
         "r_empath": "{whose} Empath sees {k} evil neighbour(s), and they sit right there",
         "r_named": "{whose} {kind} says they're the {role}",
         "r_clash": ["their story and {x}'s can't both be true, and I trust {x} more",
@@ -273,12 +354,16 @@ TEXT = {
         "my": "my",
         "me": "me",
         "whose": "{x}'s",
-        "r_demon_pct": "they're the Demon in {pct}% of the setups I can make fit",
+        "r_demon_pct": "of everyone, they fit the Demon best",
         "r_nothing": ["nothing clears them, and I can vouch for most others", "I just want to hear them defend themselves",
                       "their story can't be checked", "they're the one I'm least sure about"],
         # nominations
         "nominates": ['{a} nominates {t}: "{why}."', '{a} nominates {t}. "{why}."'],
         "nominates_plain": "{a} nominates {t}.",
+        "nominates_story": '{a} nominates {t}: "{story}."',
+        "nominates_again": ['{a} nominates {t}: "You heard my reasons."', '{a} nominates {t}: "As I said."'],
+        "said_suspect": "{text}.",
+        "said_defend": "{text}.",
         "virgin": "{a} nominates {t}: the Virgin's power triggers and {a} is executed!",
         "vote_on": "Vote on {t}: {needed} votes needed.",
         "vote_on_block": "Vote on {t}: {needed} votes needed to replace {b} on the block.",
@@ -292,8 +377,10 @@ TEXT = {
         "chats_step": "{list} step aside to talk privately.",
         "you_step": "You step aside with {list}.",
         "declined": "{list} declined to talk with you.",
-        "hint": "Hint (from {k} theories I can make fit): most suspicious {list}",
-        "seat_pct": "{p} {pct}",
+        "hint": "Hint: most suspicious {list}",
+        "seat_lvl": "{p} ({lvl})",
+        "lvl_sure": "almost certainly evil", "lvl_likely": "likely evil", "lvl_maybe": "could be evil",
+        "lvl_low": "probably fine",
         # end
         "winner": "*** {team} WINS after {d} day(s) ***",
         "team_good": "GOOD", "team_evil": "EVIL", "team_none": "NOBODY (day limit)",
@@ -444,6 +531,7 @@ TEXT = {
         "report_monk": "第{n}夜我保护了{a}。",
         "suspect": ["我怀疑{t}：{why}。", "我觉得{t}有问题：{why}。", "大家注意{t}：{why}。"],
         "suspect_plain": "我怀疑{t}。",
+        "own_story": ["没错，{x}说的就是我的信息。所以我也怀疑{t}。", "对，{x}说得没错，那就是我得到的信息。我也选{t}。"],
         "own_info": ["对，这就是我的信息：{why}。", "没错，我的信息我负责：{why}。"],
         "agree": ["我同意{x}对{t}的看法。", "跟{x}一样，我也觉得{t}有问题。", "{x}说得对，{t}确实可疑。"],
         "suspect_too": ["我也怀疑{t}，而且不只是因为这个：{why}。", "我也盯上{t}了：{why}。", "关于{t}我再补充一点：{why}。"],
@@ -508,7 +596,64 @@ TEXT = {
         "r_inv": "{x}的调查员信息显示他可能是{role}",
         "r_ft_mine": "我的占卜对他得到了“是”",
         "r_inv_mine": "我的调查员信息显示他可能是{role}",
-        "r_ifinfo": "如果{whose}信息是对的，在说得通的配置里他有{pct}%是邪恶的",
+        "r_ifinfo": "如果{whose}信息是对的，他多半是邪恶的",
+        # --- 讲成故事的论点 ---
+        "i": "我",
+        "st_ft": "{x}第{n}夜占卜了{a}和{b}，得到“是”",
+        "st_ping": "{x}第{n}夜得知{a}和{b}之中有一位是{role}",
+        "st_named": "{x}第{n}夜得知{a}是{role}",
+        "st_empath": "{x}第{n}夜共情到{k}个邪恶邻座，{t}就是其中一个邻座",
+        "st_killed": "第{n}夜{x}就被刀了",
+        "st_feared": "恶魔怕的是他，他的信息多半是真的",
+        "st_one_of": "{a}和{b}里一定有一个有问题",
+        "st_other_confirmed": "{o}已经被{y}的信息确认过",
+        "st_other_dead": "{o}已经在夜里被刀了，说明他是好人",
+        "st_other_trusted": "我更相信{o}",
+        "st_not_me": "我知道我自己是好人",
+        "st_cleared_by": "{x}被{y}的信息印证了",
+        "st_cleared_empath": "{x}被{y}的共情者信息洗白了",
+        "st_cleared_ft": "{x}在{y}的占卜里是“否”",
+        "st_cleared_virgin": "{x}被贞洁者证实了",
+        "st_only": "只有{t}的身份没人能印证",
+        "st_only_some": "只剩{list}没人能印证",
+        "st_helped": "{list}的信息至少印证了别人，{t}却没有",
+        "st_unverified": "而{t}这个{role}到现在说的都没法验证",
+        "st_as_said": "{x}刚才说过的我就不重复了",
+        "st_outsider_short": "{t}报的又是外来者，而外来者本来就比这局该有的多",
+        "st_targeted_short": "{t}之前针对过{x}，结果{x}是好人",
+        "d_baron": "外来者多出来，也可能只是因为有男爵，那样大家报的外来者都可以是真的",
+        "st_nominated": "第{d}天{t}提名了{x}",
+        "st_accused": "第{d}天{t}把矛头指向{x}",
+        "st_good_now": "{x}现在看起来是好人",
+        "st_claims": "{t}说自己是{role}",
+        "st_clash_double": "{x}也说自己是{role}，两个人不可能都说了实话",
+        "st_clash": "这和{x}的说法对不上，总有一个人没说实话",
+        "st_clash_me": "这和我知道的对不上，而我知道我说的是实话",
+        "st_trust_x": "{x}的说法到现在都站得住",
+        "st_virgin": "第{d}天{a}提名了报贞洁者的{t}，什么都没发生",
+        "st_one_lies": "他们俩总有一个不是自己说的身份",
+        "st_no_vote": "第{d}天{t}说怀疑{x}，可{x}被提名时他却没举手",
+        "st_outsiders": "我们有{k}个人报了外来者，比这局该有的多",
+        "st_outsiders_why": "要么有男爵，要么其中有人在说谎",
+        "st_clash_short": "{t}和{x}的说法也对不上",
+        "st_clash_short_me": "{t}说的也和我知道的对不上",
+        "st_no_outsiders": "这个人数的局本该没有外来者，可{t}报了{role}",
+        "c_suspect": ["我怀疑{t}", "我盯上{t}了", "我选{t}"],
+        "c_nominate": "我提名{t}",
+        "c_vote": "今天我投{t}",
+        "d_split": "占卜点的是{a}和{b}，不只是我",
+        "d_split_ping": "{x}的信息说的是{a}和{b}之一，不只是我",
+        "d_red_herring": "而且占卜师本来就有一个干扰项：一个会被当成恶魔的好人",
+        "d_confirmed": "第{n}夜{x}的信息就确认过我是{role}",
+        "d_no_exec": "到现在都没人被处决，我这个送葬者才一直没有信息",
+        "d_promise_ut": "今天处决{o}，明天我告诉你们他的身份",
+        "d_promise_ut_any": "留着我，处决一个更可疑的人，明天我就能告诉你们他是什么身份",
+        "d_promise": "让我活到明天，我还会有新信息",
+        "d_counter": "倒是{x}：{why}",
+        "d_offer": "我说过可以出我，如果大家没有更好的人选，我接受",
+        "d_better": "不过我觉得{x}是更好的选择",
+        "d_claim": "我是{role}",
+        "d_good": "我是好人",
         "r_empath": "{whose}共情者信息说身边有{k}个邪恶，他就坐在旁边",
         "r_named": "{whose}{kind}信息说他是{role}",
         "r_clash": ["他和{x}的说法不可能都是真的，我更信{x}", "他和{x}对不上，总有一个人没说实话"],
@@ -522,11 +667,15 @@ TEXT = {
         "my": "我的",
         "me": "我",
         "whose": "{x}的",
-        "r_demon_pct": "在我能推出的配置里，他有{pct}%是恶魔",
+        "r_demon_pct": "所有人里，他最像恶魔",
         "r_nothing": ["没有什么能证明他清白，而其他人我大多能担保", "我没什么硬证据，就是想先听听他怎么解释",
                       "他的说法没法验证", "他是我最拿不准的人"],
         "nominates": ["{a}提名{t}：“{why}。”", "{a}提名了{t}。“{why}。”"],
         "nominates_plain": "{a}提名{t}。",
+        "nominates_story": "{a}提名{t}：“{story}。”",
+        "nominates_again": ["{a}提名{t}：“理由我刚才说过了。”", "{a}提名{t}：“就是我刚才说的那些。”"],
+        "said_suspect": "{text}。",
+        "said_defend": "{text}。",
         "virgin": "{a}提名{t}：贞洁者的能力生效，{a}立刻被处决！",
         "vote_on": "对{t}投票：需要{needed}票。",
         "vote_on_block": "对{t}投票：需要{needed}票才能取代{b}上处决台。",
@@ -539,8 +688,9 @@ TEXT = {
         "chats_step": "{list}走到一边私下交谈。",
         "you_step": "你和{list}走到一边私聊。",
         "declined": "{list}拒绝了和你私聊。",
-        "hint": "提示（基于{k}种说得通的推测）：最可疑的是{list}",
-        "seat_pct": "{p} {pct}",
+        "hint": "提示：最可疑的是{list}",
+        "seat_lvl": "{p}（{lvl}）",
+        "lvl_sure": "几乎肯定是邪恶", "lvl_likely": "很可能是邪恶", "lvl_maybe": "有可能是邪恶", "lvl_low": "大概没问题",
         "winner": "*** {team}获胜，共进行了{d}天 ***",
         "team_good": "善良阵营", "team_evil": "邪恶阵营", "team_none": "无人（达到天数上限）",
         "grimoire": "魔典：",
@@ -660,6 +810,13 @@ def render(m, lang="en", names=()):
         return role_name(m.role, lang) if m.role else "—"
     if isinstance(m, AbilityText):
         return ABILITY.get(lang, ABILITY["en"])[m.role]
+    if isinstance(m, Chain):
+        links = LINKS.get(lang, LINKS["en"])
+        out = []
+        for link, step in m.steps:
+            text = links.get(link, "") + render(step, lang, names)
+            out.append(text[:1].upper() + text[1:] if lang != "zh" else text)
+        return ("。" if lang == "zh" else ". ").join(out)
     if isinstance(m, L):
         items = [render(x, lang, names) for x in m.items]
         sep, last = ("、", "和") if lang == "zh" else (", ", " and ")

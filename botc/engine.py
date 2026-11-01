@@ -17,9 +17,10 @@ from types import SimpleNamespace
 from . import agents, notebook, rules
 from .agents import PROFILES, REFERENCE, SPENT, EvilAgent, GoodAgent, believe
 from .human import HumanAgent, TerminalIO
-from .i18n import AbilityText, L, M, R, S, render
+from .i18n import AbilityText, Chain, L, M, R, S, render
 from .public import Death, Nomination, Public, Report, Shot, Vote, Whisper, day_tick, night_tick
 from .roles import ALL_ROLES, FIRST_NIGHT_INFO, KIND, MINIONS, OUTSIDERS, SETUP, TOWNSFOLK, WILD, is_evil
+from .story import Teller
 from .storyteller import Storyteller
 from .worlds import Solver
 
@@ -36,6 +37,8 @@ def _gist(m, speaker):
     if isinstance(m, M):
         if m.key == "my":
             return ("whose", speaker)
+        if m.key == "i":
+            return ("seat", speaker)
         if m.key == "whose":
             return ("whose", m.args["x"].seat)
         if m.key.endswith("_mine"):  # "my Investigator info" = "<speaker>'s Investigator info"
@@ -45,6 +48,8 @@ def _gist(m, speaker):
         return ("seat", m.seat)
     if isinstance(m, L):
         return ("list", tuple(_gist(x, speaker) for x in m.items))
+    if isinstance(m, Chain):
+        return ("chain", tuple(_gist(x, speaker) for _, x in m.steps))
     if isinstance(m, R):
         return ("role", m.role)
     return m
@@ -88,6 +93,9 @@ class Game:
         self.offers = []           # players who offered today to be executed if there's no better choice
         self.accused_today = {}    # target -> [(speaker, reason in English)] said in public today
         self.nominated_today = set()
+        self.nominator_now = None
+        self.told_today = {}
+        self.accusations = []      # (day, speaker, target): who said in public whom they suspect
         self.offered_ever = set()  # an AI player makes that offer once per game
         self.votes_left = 0        # during a vote: how many hands are still to come
         self.volunteer = None      # whose offer was taken up
@@ -464,6 +472,7 @@ class Game:
         self.offers = []
         self.volunteer = None
         self.accused_today = {}  # target -> [(speaker, reason in English)] said in public today
+        self.told_today = {}     # argument step -> who first said it today
         self.pub = replace(self.pub, nights=self.night)
         self.phase = "dawn"
         await self.say(M("day_header", d=self.day))
@@ -640,7 +649,7 @@ class Game:
                     await self._whisper(s, group, report=r)
             said = agent.statement(self)
             if said:
-                await self._whisper(s, group, text=self.m("suspect", t=S(said[0]), why=said[1]))
+                await self._whisper(s, group, text=self.suspect_line(s, said[0], said[1]))
             else:
                 await self._whisper(s, group, text=self.m("no_read"))
 
@@ -736,6 +745,26 @@ class Game:
         if said:
             await self._accuse(s, *said)
 
+    def suspect_line(self, s, t, why, key="suspect"):
+        """'I suspect X: reason.' or, for a story, the story ending 'so I suspect X'."""
+        if isinstance(why, Chain):
+            return M("said_suspect", text=self._untold(s, why).plus("so", M("c_suspect", t=S(t), v=s + t)))
+        return self.m(key, t=S(t), why=why)
+
+    def _untold(self, s, story):
+        """Leave out the steps someone already went through today ("I won't repeat what X said")."""
+        steps, skipped = [], None
+        for link, step in story.steps:
+            g = _gist(step, s)
+            first = self.told_today.setdefault(g, s)
+            if first != s and not steps:
+                skipped = skipped if skipped is not None else first
+                continue
+            steps.append((link if steps or skipped is None else None, step))
+        if skipped is not None and steps:
+            steps.insert(0, (None, M("st_as_said", x=S(skipped))))
+        return Chain(steps) if steps else story
+
     async def _accuse(self, s, t, why):
         """Say whom you suspect and why, without parroting: agree with whoever already gave the same
         reason today, or add a new reason to theirs."""
@@ -744,20 +773,30 @@ class Game:
         same = next((x for x, r in before if r == reason), None)
         own = ("whose", s) in _flat(reason) or ("seat", s) in _flat(reason)
         if same is not None:
-            line = self.m("own_info", why=why) if own else self.m("agree", x=S(same), t=S(t))
-        elif before:
+            if not own:
+                line = self.m("agree", x=S(same), t=S(t))
+            elif isinstance(why, Chain):
+                line = self.m("own_story", x=S(same), t=S(t))
+            else:
+                line = self.m("own_info", why=why)
+        elif before and not isinstance(why, Chain):
             line = self.m("suspect_too", t=S(t), why=why)
         else:
-            line = self.m("suspect", t=S(t), why=why)
+            line = self.suspect_line(s, t, why)
         before.append((s, reason))
+        self.accusations.append((self.day, s, t))
         await self.speech(s, line)
-        await self._reply(t)
+        await self._reply(t, s)
 
-    async def _reply(self, t):
-        """An accused AI player answers back, once a day."""
+    async def _reply(self, t, by=None):
+        """An accused AI player answers back, once a day: with reasons if they have any."""
         if t == self.human or t in self.dead or (self.day, t) in self.replied:
             return
         self.replied.add((self.day, t))
+        story = Teller(self, self.agents[t]).defend(by, max_steps=min(3, self.agents[t].profile.story))
+        if story is not None:
+            await self.speech(t, M("said_defend", text=story))
+            return
         claim = self.pub.claims[t] if self.pub.claims else None
         await self.speech(t, self.m("reply", role=R(claim)) if claim else M("reply_silent"))
 
@@ -854,7 +893,8 @@ class Game:
                 t = await io.seat(M("q_whom_suspect"), [s for s in self.alive if s != h])
                 if t is not None:
                     await self.speech(h, M("suspect_plain", t=S(t)))
-                    await self._reply(t)
+                    self.accusations.append((self.day, h, t))
+                    await self._reply(t, h)
             elif act == "offer":
                 self.offers.append(h)
                 await self.speech(h, self.m("volunteer"))
@@ -968,7 +1008,9 @@ class Game:
         agent = self.agents[self.human]
         b = self.public_belief() if self.human in self.team else self.belief_of(agent)
         top = sorted((s for s in self.alive if s != self.human), key=lambda s: -b.suspicion(s))[:4]
-        await self.tell(M("hint", k=b.count, list=L(M("seat_pct", p=S(s), pct=b.suspicion(s)) for s in top)))
+        level = lambda x: "lvl_sure" if x >= 70 else "lvl_likely" if x >= 45 else "lvl_maybe" if x >= 25 else "lvl_low"
+        await self.tell(M("hint", k=b.count, list=L(M("seat_lvl", p=S(s), lvl=M(level(b.suspicion(s))))
+                                                    for s in top)))
 
     async def _show_reads(self):
         if not self.out or self.human is not None:
@@ -1026,7 +1068,14 @@ class Game:
                     await self.say(M("nominates_plain", a=S(s), t=S(t)), speaker=s)
                 else:
                     b = agent.read(self) if s in self.team else self.belief_of(agent)
-                    await self.say(self.m("nominates", a=S(s), t=S(t), why=agent.explain(self, t, b)), speaker=s)
+                    why = agent.explain(self, t, b)
+                    if (self.day, s, t) in self.accusations:
+                        await self.say(self.m("nominates_again", a=S(s), t=S(t)), speaker=s)
+                    elif isinstance(why, Chain):
+                        await self.say(M("nominates_story", a=S(s), t=S(t),
+                                         story=why.plus("so", M("c_nominate", t=S(t)))), speaker=s)
+                    else:
+                        await self.say(self.m("nominates", a=S(s), t=S(t), why=why), speaker=s)
                 if await self._vote_on(s, t, st):
                     return
         # Nobody about to die: take up an offer made in the discussion.
@@ -1058,7 +1107,8 @@ class Game:
         if await self._virgin(s, t):
             return True
         if s != t:
-            await self._defend(t)
+            await self._defend(t, s)
+        self.nominator_now = s
         majority = (len(self.alive) + 1) // 2
         needed = max(majority, st["best"] + 1)
         on_block = None if st["tie"] else st["block"]
@@ -1150,7 +1200,7 @@ class Game:
         await self.speech(t, M("virgin_ok"))  # an evil novice goes along, and will smear the Virgin
         self.virgin_plan = (t, v)
 
-    async def _defend(self, t):
+    async def _defend(self, t, by=None):
         """The nominee speaks before the vote."""
         if t == self.human:
             await self._human_turn(defending=True)
@@ -1163,6 +1213,10 @@ class Game:
             if self.pub.claims and self.pub.claims[t] == agent.role and agent.inbox:
                 await self._publish(*sorted(agent.inbox, key=lambda r: r.night))
                 agent.inbox.clear()
+        story = Teller(self, agent).defend(by, max_steps=agent.profile.story)
+        if story is not None:
+            await self.speech(t, M("said_defend", text=story))
+            return
         claim = self.pub.claims[t] if self.pub.claims else None
         await self.speech(t, self.m("defend", role=R(claim)) if claim else M("defend_silent"))
 

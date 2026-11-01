@@ -17,6 +17,7 @@ from itertools import combinations
 from . import notebook
 from .i18n import L, M, R, S
 from .public import day_tick
+from .story import Teller
 from .roles import KIND, is_evil
 from .worlds import Belief, tally
 
@@ -50,6 +51,7 @@ class Profile:
     silence_cost: int = 15   # suspicion per night of info a claimed info role should have shared but didn't
     confide_at: int = 30     # good only: talk privately with (and confide in) players below this suspicion
     foresight: bool = True   # holds a vote while someone clearly more suspicious hasn't been nominated yet
+    story: int = 3           # steps of an argument they can string together ("X did A. But B. So C.")
     depth: int = 2           # notebook reasoner: rounds of trust propagation (1 = info at face value)
     breadth: int = 4         # notebook reasoner: suspects their theories are built from
 
@@ -59,11 +61,11 @@ PROFILES = {
                       considers_misregistration=False, max_excuses=0,
                       nominate_at=30, vote_at=25, bandwagon=6, saint_caution=10, lookahead=1,
                       ft_split=False, vote_memory=5, story_check=0, considers_bluffs=False, hide_rate=0,
-                      confide_at=40, quiet_rate=0, silence_cost=8, depth=1, breadth=3, foresight=False),
+                      confide_at=40, quiet_rate=0, silence_cost=8, depth=1, breadth=3, foresight=False, story=1),
     "regular": Profile("regular", considers_misregistration=False, max_excuses=1, nominate_at=30),
     "veteran": Profile("veteran", max_excuses=3, nominate_at=35, vote_at=35, bandwagon=1, lookahead=6,
                        tests_virgin=True, vote_memory=20, story_check=2, hide_rate=0.3, reveal_day=3,
-                       confide_at=20, quiet_rate=0.35, silence_cost=20, depth=3, breadth=6),
+                       confide_at=20, quiet_rate=0.35, silence_cost=20, depth=3, breadth=6, story=4),
 }
 # How "the town" reads the record; used by the Storyteller.
 REFERENCE = Profile("reference")
@@ -144,6 +146,10 @@ class Agent:
             return M("r_evilclaim", role=R(claim))
         if claim == getattr(self, "role", None) and target != self.seat:
             return M("r_counter", role=R(claim))
+        if REASONER == "notebook":
+            told = Teller(game, self).accuse(target, self.profile.story)
+            if told is not None:
+                return told
         if game.silent_nights(target):
             return M("r_noinfo", role=R(claim))
         twins = [s for s, c in enumerate(pub.claims) if s != target and c == claim]
@@ -171,8 +177,9 @@ class Agent:
                 return M("r_ft_mine") if mine else M("r_ft", x=S(r.seat))
             if r.kind == "investigator" and r.data[0] is not None and target in r.data[:2]:
                 return M("r_inv_mine", role=R(r.data[2])) if mine else M("r_inv", x=S(r.seat), role=R(r.data[2]))
-        # Whose info, if true, most implicates them?
-        best = max(((b.evil_if_good(target, r), r) for r in {x.seat for x in pub.reports}
+        # Whose info, if true, most implicates them? (The solver's way of putting it; people don't
+        # talk like that, so the notebook reasoner doesn't say it.)
+        best = None if REASONER == "notebook" else max(((b.evil_if_good(target, r), r) for r in {x.seat for x in pub.reports}
                     if r != target and b.evil_pct(r) < 40), default=None)
         if best and best[0] >= 0.6:
             whose = M("my") if best[1] == self.seat else M("whose", x=S(best[1]))
@@ -386,6 +393,10 @@ class GoodAgent(Agent):
             return False
         endgame = len(game.alive) <= 4
         sus = self.suspicion(game, nominee)
+        # Say it, then vote it: my own nomination, or whom I said today I suspect (unless someone I
+        # suspect more is already on the block).
+        if not ghost and (game.nominator_now == self.seat or (game.day, self.seat, nominee) in game.accusations):
+            return block is None or sus > self.suspicion(game, block)
         # In the endgame a tie means nobody dies, which hands the game to evil: only switch for a clear reason.
         if nominee == game.volunteer and block is None:
             # Nobody better to execute: take the offer, unless someone else looks clearly worse.
