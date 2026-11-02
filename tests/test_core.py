@@ -184,6 +184,16 @@ class _Scripted(TerminalIO):
         return prompt.key == "q_accept"
 
 
+def test_minions_only_know_bluffs_they_were_told():
+    for seed in range(20):
+        g = Game(8, seed, out=None)
+        g.play()
+        first_demon = g.start_roles.index("imp")
+        for m in g.team - {first_demon}:
+            if m not in g.briefed:
+                assert g.known_bluffs[m] == []
+
+
 def test_demon_briefs_a_human_minion_on_day_one():
     for seed in range(30):
         probe = Game(8, seed, out=None)
@@ -192,9 +202,12 @@ def test_demon_briefs_a_human_minion_on_day_one():
         g = Game(8, seed, out=None, human=minion, io=io)
         g.play()
         day1 = [e for e in g.log if e["chat"] and e["m"].key == "speech"
-                and e["m"].args["text"].key == "e_bluff_for_you"]
-        assert day1, f"seed {seed}: no bluff handed over"
-        assert g.human_bluff and g.human_bluff not in [g.planned_claims[s] for s in g.team if s != minion]
+                and e["m"].args["text"].key == "e_bluffs" and e["day"] == 1]
+        assert day1, f"seed {seed}: no bluffs handed over"
+        # The human Minion learns all three bluffs, and the suggestion isn't a teammate's claim.
+        assert sorted(g.known_bluffs[minion]) == sorted(g.bluffs)
+        pick = day1[0]["m"].args["text"].args["role"].role
+        assert pick in g.bluffs and pick != g.planned_claims[g.demon]
     assert "lbl_given" in io.offered
 
 

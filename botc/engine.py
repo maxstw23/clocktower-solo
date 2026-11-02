@@ -32,6 +32,16 @@ BLUFF_ORDER = ("washerwoman", "librarian", "investigator", "chef", "undertaker",
                "fortune_teller", "soldier", "mayor", "ravenkeeper", "virgin", "slayer")
 
 
+# Characters a bluffer can be caught out on at once: a Townsfolk nominating a fake Virgin, a fake
+# Slayer asked to shoot.
+TESTABLE = ("virgin", "slayer")
+
+
+def _bluff_rank(role):
+    """Bluffs in the order the evil team prefers them: hard to test, then the usual order."""
+    return (role in TESTABLE, BLUFF_ORDER.index(role) if role in BLUFF_ORDER else 99)
+
+
 def _gist(m, speaker):
     """What a message says, whoever says it ("my info" from Eli = "Eli's info"), for comparing."""
     if isinstance(m, M):
@@ -152,21 +162,41 @@ class Game:
                 self.agents.append(GoodAgent(s, self.perceived[s], PROFILES[rng.choice(mix)], self.n, arng))
         # What each player intends to claim on day 1 (also the Storyteller's forecast).
         claims = [a.cover or a.role if s not in self.team else None for s, a in enumerate(self.agents)]
-        bluffs = sorted(self.bluffs, key=BLUFF_ORDER.index)
-        self.human_bluff = None  # a bluff the Demon will hand a human Minion
-        self.bluff_given = False
-        if self.human in self.team and self.human != self.demon and len(bluffs) > 1:
-            self.human_bluff = bluffs.pop(1)
-            claims[self.human] = self.human_bluff
-        # The evil team settles its bluffs on night one; the Demon picks first.
-        for s in sorted(self.team - {self.human} if self.human_bluff else self.team, key=lambda s: s != self.demon):
-            # Big games can run out of unclaimed Townsfolk: then an unclaimed Outsider, then risk a double claim.
-            free = ([r for r in TOWNSFOLK if r not in claims] or [r for r in OUTSIDERS if r not in claims and r != "drunk"]
-                    or list(TOWNSFOLK))
-            claims[s] = bluffs.pop(0) if bluffs else rng.choice(free)
-        self.planned_claims = tuple(claims)
+        # Only the Demon knows its three bluffs; a Minion learns them in a private chat, or guesses.
+        self.known_bluffs = {s: [] for s in self.team}
+        self.known_bluffs[self.demon] = sorted(self.bluffs, key=_bluff_rank)
+        self.briefed = set()
+        if self.demon != self.human:
+            claims[self.demon] = self.known_bluffs[self.demon][0]
+        for s in sorted(self.team - {self.demon, self.human}):
+            claims[s] = self._own_guess(s, claims, rng)
+        self.planned_claims = claims  # what each player means to claim (it changes when a Minion is briefed)
         if self.human is not None:
             self._seat_human(io)
+
+    def _own_guess(self, s, claims, rng):
+        """A Minion with no bluffs from the Demon picks a Townsfolk to claim: one they think is out
+        of play (the Spy knows; the others only know their team), and hard to test."""
+        if self.roles[s] == "spy":
+            pool = [r for r in TOWNSFOLK if r not in self.roles and r not in claims]
+        else:
+            pool = [r for r in TOWNSFOLK if r not in claims and r not in (self.roles[x] for x in self.team)]
+        pool = pool or [r for r in OUTSIDERS if r not in claims and r != "drunk"] or list(TOWNSFOLK)
+        safe = [r for r in pool if r not in TESTABLE] or pool
+        return rng.choice(sorted(safe))
+
+    def _brief(self, demon, minion):
+        """The Demon shares its bluffs with a Minion and suggests one to claim."""
+        known = self.known_bluffs[demon]
+        taken = {self.planned_claims[x] for x in self.team if x != minion}
+        free = [b for b in known if b not in taken] or known
+        self.known_bluffs[minion] = list(known)
+        self.briefed.add(minion)
+        pick = sorted(free, key=_bluff_rank)[0]
+        told = any(w.speaker == minion and w.claim for w in self.whispers)  # already told someone a guess
+        if (not self.pub.claims or self.pub.claims[minion] is None) and minion != self.human and not told:
+            self.planned_claims[minion] = pick
+        return pick
 
     def _seat_human(self, io):
         h = self.human
@@ -185,8 +215,6 @@ class Game:
         await self.tell(M("you_evil", team=L(M("seat_role", p=S(s), role=R(self.roles[s])) for s in sorted(self.team))))
         if h == self.demon:
             await self.tell(M("bluffs", roles=L(R(b) for b in self.bluffs)))
-        mates = [s for s in self.team if s != h]
-        await self.tell(M("mates_claim", list=L(M("as", p=S(s), role=R(self.planned_claims[s])) for s in mates)))
 
     # --- helpers -----------------------------------------------------------------------------
 
@@ -630,9 +658,13 @@ class Game:
                     await self._whisper(s, group, text=M("e_poison", t=S(agent.poison_pick(self))))
                 elif s == self.demon and self.day >= 1:
                     await self._whisper(s, group, text=M("e_kill", t=S(agent.kill_pick(self))))
-                if s == self.demon and self.human in mates and self.human_bluff and not self.bluff_given:
-                    self.bluff_given = True
-                    await self._whisper(s, group, text=M("e_bluff_for_you", role=R(self.human_bluff)))
+                if s == self.demon:
+                    for m in sorted(x for x in mates if x not in self.briefed):
+                        pick = self._brief(s, m)
+                        await self._whisper(s, group, text=M("e_bluffs", list=L((R(b) for b in self.known_bluffs[s]),
+                                                                              conj=True), t=S(m), role=R(pick)))
+                elif s not in self.briefed and self.demon == self.human and self.human in mates:
+                    await self._whisper(s, group, text=M("e_ask_bluff"))
                 continue
             public = self.pub.claims[s] if self.pub.claims else None
             if s in self.team and public is None:
@@ -668,6 +700,8 @@ class Game:
                 acts.append(("kill", M("c_kill")))
             if any(self.roles[x] == "poisoner" for x in mates):
                 acts.append(("poison", M("c_poison")))
+            if h == self.demon and any(x not in self.briefed for x in mates):
+                acts.append(("bluffs", M("c_bluffs")))
             acts.append(("done", M("c_done")))
             act = acts[await io.choose(M("q_chat"), [a[1] for a in acts], default=len(acts) - 1)][0]
             if act == "done":
@@ -676,6 +710,20 @@ class Game:
                 await self._human_claim(group)
             elif act == "share":
                 await self._human_share(told, group)
+            elif act == "bluffs":
+                known = self.known_bluffs[h]
+                for m in sorted(x for x in mates if x not in self.briefed):
+                    taken = {self.planned_claims[x] for x in self.team if x != m} | {self.pub.claims[h] if self.pub.claims else None}
+                    options = [b for b in known if b not in taken] or known
+                    pick = options[await io.choose(M("q_bluff_for", t=S(m)), [R(b) for b in options], default=0)]
+                    self.known_bluffs[m] = list(known)
+                    self.briefed.add(m)
+                    told = any(w.speaker == m and w.claim for w in self.whispers)
+                    if (not self.pub.claims or self.pub.claims[m] is None) and not told:
+                        self.planned_claims[m] = pick
+                    await self._whisper(h, group, text=M("e_bluffs", list=L((R(b) for b in known), conj=True),
+                                                         t=S(m), role=R(pick)))
+                    await self._whisper(m, group, text=M("e_ok_claim", role=R(pick)))
             elif act in ("kill", "poison"):
                 targets = [s for s in self.alive if s not in self.team]
                 t = await io.seat(M("q_kill_suggest" if act == "kill" else "q_poison_suggest"), targets)
@@ -918,12 +966,16 @@ class Game:
         io = self.agents[h].io
         mine = [self.perceived[h]] if h not in self.team else ([self.roles[h]] if group and any(
             x in self.team and x != h for x in group) else [])
-        bluffs = self.bluffs if h == self.demon else [self.human_bluff] if self.bluff_given else []
+        # Bluffs a teammate is already claiming go last, marked as theirs.
+        mates_claims = {self.planned_claims[x] for x in self.team if x != h} if h in self.team else set()
+        bluffs = [b for b in self.known_bluffs.get(h, []) if b not in mates_claims] + \
+                 [b for b in self.known_bluffs.get(h, []) if b in mates_claims]
         first = mine + [b for b in bluffs if b not in mine]
         roles = first + [r for r in ALL_ROLES if r not in first and r != "drunk"]
-        bluff_label = "lbl_bluff" if h == self.demon else "lbl_given"
-        labels = [M("lbl_yours" if r in mine else bluff_label if r in bluffs else "lbl_evil" if is_evil(r)
-                    else "lbl_role", role=R(r)) for r in roles]
+        bluff_label = "lbl_bluff" if h == self.demon else "lbl_given"  # Minion: what the Demon told them
+        labels = [M("lbl_yours" if r in mine else "lbl_mate" if r in mates_claims and r in bluffs
+                    else bluff_label if r in bluffs else "lbl_evil" if is_evil(r) else "lbl_role", role=R(r))
+                  for r in roles]
         role = roles[await io.choose(M("q_which_char"), labels, default=0)]
         if group:
             await self._whisper(h, group, claim=role)

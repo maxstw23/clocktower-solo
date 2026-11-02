@@ -71,6 +71,8 @@ character, or by `reveal_day`. Whoever really holds a character calls out a fals
 hasn't shared past nights' info costs suspicion (`silence_cost`); an Undertaker says so when nobody
 was executed. In AI-only 8-player games this moved good's win rate from about 55% to 63-67%.
 
+**Bluffs.** Only the Demon knows its three bluffs. A Minion learns them in a private chat with the Demon (on day 1 an AI Demon seeks out its Minions and a Minion without bluffs goes to ask), and is told one to claim; a Minion who never got them guesses a Townsfolk they think is out of play (the Spy knows the grimoire), risking a double claim. Bluffs that can be tested on the spot (Virgin, Slayer) come last. A human Demon hands out bluffs from the private chat; a human Minion learns all three.
+
 **Evil coordination.** Anyone may claim an evil character, publicly or privately (as a good player
 it reads as a costly bluff). In a private chat among the evil team, AI teammates state their real
 character and plan ("I'll poison X tonight"); an evil human can suggest tonight's kill or poison

@@ -464,6 +464,14 @@ class EvilAgent(Agent):
         player whose claim they'd most like to know about."""
         if game.human in self.team and game.human in free and game.day <= 2:
             return [game.human]
+        # Day 1: the Demon hands out bluffs; a Minion without any goes to ask.
+        if game.day == 1:
+            if self.seat == game.demon:
+                waiting = [m for m in free if m in self.team and m not in game.briefed]
+                if waiting:
+                    return waiting[:1]
+            elif self.seat not in game.briefed and game.demon in free:
+                return [game.demon]
         targets = [s for s in free if s not in self.team]
         if not targets:
             return []
