@@ -338,6 +338,11 @@ class GoodAgent(Agent):
         if s in self.impostors(game):
             grudge += 60  # they claim my character
         grudge += self.profile.silence_cost * len(game.silent_nights(s))
+        # Said in public they suspect someone, then didn't vote for them.
+        for d, sp, x in game.accusations:
+            if sp == s and any(v.day == d and v.nominee == x and s not in v.voters and v.nominator != s
+                               for v in game.known.votes):
+                grudge += self.profile.vote_memory
         # A private promise to me, broken.
         grudge += 25 * sum(1 for p in game.broken if p[1] == s and p[3] == self.seat)
         # Being swayed by what others say in public, as much as I trust whoever says it.
@@ -451,6 +456,15 @@ class EvilAgent(Agent):
         super().__init__(seat, profile, n, rng)
         self.team = team
         self.survived = set()  # shared by the team: attacked players who didn't die
+        # Like a good info role, an evil player may keep their (claimed) character private at first.
+        # (Calibrated so that "I'll keep my character to myself for now" comes as often from good as
+        # from evil players: their bluffs are nearly all info roles, good players' characters aren't.)
+        self.quiet = rng.random() < profile.quiet_rate / 6
+
+    def stays_quiet(self, game, claim, pressed=False):
+        """Hold back a valuable-looking claim on the first day(s), as good info roles do."""
+        return (self.quiet and VALUE.get(claim, 0) >= 2 and not pressed
+                and game.day < self.profile.reveal_day and len(game.alive) > 5)
 
     def read(self, game, pub=None, base=None):
         return game.public_belief(pub, base, self.profile)
@@ -548,6 +562,10 @@ class EvilAgent(Agent):
         """Vote like a townsperson on good players, never for the team or to replace a good player."""
         if self.busses(game, nominee) and yes + 2 >= needed and block is None:
             return True  # the Minion is going anyway: be seen voting for it
+        if nominee in self.team and not ghost and self.profile.name != "novice" \
+                and yes + 1 + game.votes_left < needed \
+                and random.Random(f"cheap-{game.seed}-{game.day}-{self.seat}-{nominee}").random() < 0.5:
+            return True  # a hand for a teammate who can't be executed anyway: it looks clean
         if nominee in self.team or (block is not None and block not in self.team):
             return False
         if yes + 1 >= needed:

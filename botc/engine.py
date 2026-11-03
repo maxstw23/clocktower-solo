@@ -844,9 +844,14 @@ class Game:
         agent = self.agents[s]
         await self._nothing_to_report(s)
         if s in self.team:
+            quiet = False
             if not self.pub.claims or self.pub.claims[s] is None:
-                await self._claim(s, self.planned_claims[s])
-            if s not in self.dead:
+                if agent.stays_quiet(self, self.planned_claims[s]) and s not in self.dead:
+                    await self.speech(s, self.m("stay_quiet"))
+                    quiet = True
+                else:
+                    await self._claim(s, self.planned_claims[s])
+            if s not in self.dead and not quiet:
                 for night in self._info_nights(s, self.pub.claims[s]):
                     fake = self._evil_report(s, night)
                     if fake:
@@ -1283,7 +1288,12 @@ class Game:
         """A good first-night info role, on day 1 or 2, while someone claims Undertaker."""
         claims = self.pub.claims or ()
         agent = self.agents[x]
-        return (self.day <= 2 and x in self.alive and x not in self.team and x not in self.offered_ever
+        if x in self.team:  # a Minion with a spent bluff may offer too, to look good (never the Demon)
+            mine = claims[x] if claims else None
+            return (self.day <= 2 and x in self.alive and x != self.demon and x not in self.offered_ever
+                    and agent.profile.name != "novice" and mine in SPENT
+                    and any(claims[y] == "undertaker" for y in self.alive if y != x))
+        return (self.day <= 2 and x in self.alive and x not in self.offered_ever
                 and agent.profile.name != "novice" and bool(claims) and claims[x] == agent.role
                 and agent.role in SPENT and any(claims[y] == "undertaker" for y in self.alive if y != x))
 
@@ -1296,6 +1306,10 @@ class Game:
             if claims[x] == "mayor" and x != self.human:
                 await self.speech(x, self.m("mayor_plea" if len(self.alive) == 3 else "mayor_plea4"))
 
+    def _sus(self, agent, x):
+        """How suspicious x looks to this player (an evil player reads the town's view)."""
+        return agent.suspicion(self, x) if hasattr(agent, "suspicion") else agent.read(self).suspicion(x)
+
     async def _plan_virgin_test(self):
         """Someone proposes that a first-night info role nominate the claimed Virgin: one
         nomination tests both of them."""
@@ -1304,12 +1318,12 @@ class Game:
                    and x not in self.virgin_planned]
         if not virgins:
             return
-        planners = [x for x in self.alive if x not in self.team and x != self.human
-                    and self.agents[x].profile.name != "novice"]
+        planners = [x for x in self.alive if x != self.human and self.agents[x].profile.name != "novice"
+                    and not (x in self.team and any(v in self.team for v in virgins))]
         if not planners:
             return
         # Test the claimed Virgin the proposer doubts most (two may claim it).
-        v = max(virgins, key=lambda x: (self.agents[planners[0]].suspicion(self, x), -x))
+        v = max(virgins, key=lambda x: (self._sus(self.agents[planners[0]], x), -x))
         planners = [x for x in planners if x != v]
         testers = [x for x in self.alive if x != v and claims[x] in SPENT]
         if not planners or not testers:
@@ -1317,7 +1331,7 @@ class Game:
         p = planners[0]
         self.virgin_planned.add(v)
         agent = self.agents[p]
-        t = min(testers, key=lambda x: (agent.suspicion(self, x) if x != p else 0, agent.bias[x]))
+        t = min(testers, key=lambda x: (self._sus(agent, x) if x != p else 0, agent.bias[x]))
         if t == p:  # the proposer is the best tester: they go themself
             await self.speech(p, M("virgin_plan_self", vg=S(v)))
             self.virgin_plan = (p, v)
@@ -1347,6 +1361,12 @@ class Game:
             await self._human_turn(defending=True)
             return
         agent = self.agents[t]
+        if t in self.team and (not self.pub.claims or self.pub.claims[t] is None):
+            await self._claim(t, self.planned_claims[t])  # pressed: come out with the bluff
+            for night in self._info_nights(t, self.pub.claims[t]):
+                fake = self._evil_report(t, night)
+                if fake:
+                    await self._publish(fake)
         if t not in self.team:
             role = agent.claim_now(self, pressed=True)
             if role:
