@@ -15,7 +15,7 @@ from itertools import combinations
 from types import SimpleNamespace
 
 from . import agents, notebook, rules
-from .agents import PROFILES, REFERENCE, SPENT, EvilAgent, GoodAgent, believe
+from .agents import PROFILES, REFERENCE, SPENT, VALUE, EvilAgent, GoodAgent, believe
 from .human import HumanAgent, TerminalIO
 from .i18n import AbilityText, Chain, L, M, R, S, render
 from .public import Death, Nomination, Public, Report, Shot, Vote, Whisper, day_tick, night_tick
@@ -106,6 +106,9 @@ class Game:
         self.nominator_now = None
         self.told_today = {}
         self.accusations = []      # (day, speaker, target): who said in public whom they suspect
+        self.pledges = []          # (day, who, target, asked by): agreed in private to vote for target
+        self.broken = []           # (day, who, target, asked by): a pledge not kept
+        self.team_knows = {}       # seat -> character the evil team learned from the Spy
         self.offered_ever = set()  # an AI player makes that offer once per game
         self.votes_left = 0        # during a vote: how many hands are still to come
         self.volunteer = None      # whose offer was taken up
@@ -653,18 +656,32 @@ class Game:
             if s in self.team and mates:
                 # Among the evil team, a private chat is for making plans.
                 public = self.pub.claims[s] if self.pub.claims else None
-                await self._whisper(s, group, text=M("e_role", role=R(self.roles[s]), claim=R(public or self.planned_claims[s])))
+                unsettled = public is None and s not in self.briefed and s != self.demon and self.demon == self.human
+                if not unsettled:  # a Minion still waiting for bluffs says so instead (below)
+                    await self._whisper(s, group, text=M("e_role", role=R(self.roles[s]), claim=R(public or self.planned_claims[s])))
+                else:
+                    await self._whisper(s, group, text=M("e_role_only", role=R(self.roles[s])))
                 if self.roles[s] == "poisoner":
                     await self._whisper(s, group, text=M("e_poison", t=S(agent.poison_pick(self))))
                 elif s == self.demon and self.day >= 1:
                     await self._whisper(s, group, text=M("e_kill", t=S(agent.kill_pick(self))))
+                if self.roles[s] == "spy":
+                    # What the Spy saw in the grimoire: the characters the team most wants to know.
+                    seen = sorted((x for x in self.alive if x not in self.team and x not in self.team_knows),
+                                  key=lambda x: (-VALUE.get(self.roles[x], 0), x))[:2]
+                    for x in seen:
+                        self.team_knows[x] = self.roles[x]
+                    if seen:
+                        await self._whisper(s, group, text=M("w_saw", list=L((M("is_role", p=S(x), role=R(self.roles[x]))
+                                                                              for x in seen), conj=True)))
                 if s == self.demon:
                     for m in sorted(x for x in mates if x not in self.briefed):
                         pick = self._brief(s, m)
                         await self._whisper(s, group, text=M("e_bluffs", list=L((R(b) for b in self.known_bluffs[s]),
                                                                               conj=True), t=S(m), role=R(pick)))
-                elif s not in self.briefed and self.demon == self.human and self.human in mates:
-                    await self._whisper(s, group, text=M("e_ask_bluff"))
+                elif s not in self.briefed and self.demon == self.human and self.human in mates \
+                        and (not self.pub.claims or self.pub.claims[s] is None):
+                    await self._whisper(s, group, text=M("e_ask_bluff", role=R(self.planned_claims[s])))
                 continue
             public = self.pub.claims[s] if self.pub.claims else None
             if s in self.team and public is None:
@@ -682,8 +699,33 @@ class Game:
             said = agent.statement(self)
             if said:
                 await self._whisper(s, group, text=self.suspect_line(s, said[0], said[1]))
+                if said[0] not in group and said[0] in self.alive:
+                    await self._propose(s, group, said[0])
             else:
                 await self._whisper(s, group, text=self.m("no_read"))
+
+    async def _propose(self, s, group, t):
+        """'Let's both vote for X today': each listener agrees (a pledge) or says why not."""
+        if s in self.dead:
+            return
+        self.pledges.append((self.day, s, t, s))
+        await self._whisper(s, group, text=M("w_plan", t=S(t)))
+        for x in group:
+            if x == s:
+                continue
+            if x == self.human:
+                ok = await self.agents[x].io.yes_no(M("q_pledge", p=S(s), t=S(t)))
+            else:
+                ok = self.agents[x].agrees(self, s, t)
+            if ok:
+                self.pledges.append((self.day, x, t, s))
+                if x != self.human:
+                    await self._whisper(x, group, text=M("w_agree", t=S(t)))
+            elif x != self.human:
+                said = self.agents[x].statement(self)
+                other = said[0] if said and said[0] != t else None
+                await self._whisper(x, group, text=M("w_disagree_other", o=S(other)) if other is not None
+                                    else M("w_disagree", t=S(t)))
 
     async def _human_chat(self, group):
         h = self.human
@@ -702,6 +744,10 @@ class Game:
                 acts.append(("poison", M("c_poison")))
             if h == self.demon and any(x not in self.briefed for x in mates):
                 acts.append(("bluffs", M("c_bluffs")))
+            acts.append(("ask", M("c_ask")))
+            acts.append(("plan", M("c_plan")))
+            if self.roles[h] == "spy":
+                acts.append(("saw", M("c_saw")))
             acts.append(("done", M("c_done")))
             act = acts[await io.choose(M("q_chat"), [a[1] for a in acts], default=len(acts) - 1)][0]
             if act == "done":
@@ -710,6 +756,24 @@ class Game:
                 await self._human_claim(group)
             elif act == "share":
                 await self._human_share(told, group)
+            elif act == "ask":
+                await self._whisper(h, group, text=M("w_ask"))
+                for x in group:
+                    if x != h:
+                        await self._answer(x, group)
+            elif act == "plan":
+                t = await io.seat(M("q_plan"), [x for x in self.alive if x not in group])
+                if t is not None:
+                    await self._propose(h, group, t)
+            elif act == "saw":
+                x = await io.seat(M("q_saw_who"), [y for y in range(self.n) if y != h])
+                if x is not None:
+                    truth = self.roles[x]
+                    roles = [truth] + [r for r in ALL_ROLES if r != truth]
+                    r = roles[await io.choose(M("q_saw_what", p=S(x)), [R(r) for r in roles], default=0)]
+                    await self._whisper(h, group, text=M("w_saw", list=M("is_role", p=S(x), role=R(r))))
+                    if any(y in self.team for y in group if y != h):
+                        self.team_knows[x] = r  # the team takes the Spy's word for it
             elif act == "bluffs":
                 known = self.known_bluffs[h]
                 for m in sorted(x for x in mates if x not in self.briefed):
@@ -736,6 +800,21 @@ class Game:
                 t = await io.seat(M("q_whom_suspect"), [s for s in self.alive if s != h])
                 if t is not None:
                     await self._whisper(h, group, text=M("suspect_plain", t=S(t)))
+
+    async def _answer(self, x, group):
+        """Asked for their character and information in private: someone who trusts the asker
+        answers (a hidden player with their real character); otherwise not yet."""
+        agent, asker = self.agents[x], self.human
+        if x in self.team:
+            claim = (self.pub.claims[x] if self.pub.claims else None) or self.planned_claims[x]
+            await self._whisper(x, group, claim=claim)
+            return
+        if agent.suspicion(self, asker) >= agent.profile.confide_at + 10:
+            await self._whisper(x, group, text=M("w_not_yet"))
+            return
+        await self._whisper(x, group, claim=agent.role)
+        for r in sorted(agent.inbox + [r for r in self.pub.reports if r.seat == x], key=lambda r: r.night):
+            await self._whisper(x, group, report=r)
 
     async def _offer(self, s):
         if s != self.human and self._may_offer(s):
@@ -1175,6 +1254,9 @@ class Game:
                        else M("vote_on", t=S(t), needed=needed))
         voters = await self._vote(t, needed, on_block)
         self.pub = replace(self.pub, votes=self.pub.votes + (Vote(self.day, s, t, tuple(voters)),))
+        for p in self.pledges:  # a private promise to vote for t, not kept
+            if p[0] == self.day and p[2] == t and p[1] not in voters and p[1] in self.alive and p not in self.broken:
+                self.broken.append(p)
         who = L((S(v) for v in voters), paren=True)
         if len(voters) >= majority and len(voters) > st["best"]:
             st.update(best=len(voters), block=t, tie=False)

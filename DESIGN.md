@@ -73,6 +73,8 @@ was executed. In AI-only 8-player games this moved good's win rate from about 55
 
 **Bluffs.** Only the Demon knows its three bluffs. A Minion learns them in a private chat with the Demon (on day 1 an AI Demon seeks out its Minions and a Minion without bluffs goes to ask), and is told one to claim; a Minion who never got them guesses a Townsfolk they think is out of play (the Spy knows the grimoire), risking a double claim. Bluffs that can be tested on the spot (Virgin, Slayer) come last. A human Demon hands out bluffs from the private chat; a human Minion learns all three.
 
+**Private deals.** In a private chat anyone can propose voting for someone together today; each listener agrees (a pledge they will keep at the vote) or says why not. Good players agree if they suspect the target enough or trust whoever asks; evil players gladly agree against a good player, and against a teammate a novice says yes and won't vote while others refuse. Nobody promises what they may not keep (the dead, the Butler, a player holding off at four). A broken promise is remembered by whoever was promised (+25 suspicion) and can be told in public as a story. The human can also ask for someone's character and information (they answer if they trust you), and a Spy can tell anyone what they saw in the grimoire, truly or not; an AI Spy tells its team the most valuable characters, and the Demon kills with that knowledge.
+
 **Evil coordination.** Anyone may claim an evil character, publicly or privately (as a good player
 it reads as a costly bluff). In a private chat among the evil team, AI teammates state their real
 character and plan ("I'll poison X tonight"); an evil human can suggest tonight's kill or poison

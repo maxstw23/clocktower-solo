@@ -178,6 +178,14 @@ class Teller:
                     break
         return out[:1]
 
+    def broke_pledge(self, target):
+        """They promised me in private to vote for someone, then didn't."""
+        out = []
+        for d, who, t, asker in self.game.broken:
+            if who == target and asker == self.me:
+                out.append((2.3, [(None, M("st_broke", d=d, t=S(target), x=self.who(t)))]))
+        return out[-1:]
+
     def outsiders(self, target):
         claims = self.pub.claims or ()
         outs = [s for s, r in enumerate(claims) if r is not None and KIND[r] == "outsider"]
@@ -247,7 +255,8 @@ class Teller:
             return None
         found = [(w, steps, kind) for kind, shape in (
             ("fulfilled", self.fulfilled), ("targeted", self.targeted), ("clash", self.clashing),
-            ("no_vote", self.no_vote), ("outsiders", self.outsiders), ("elimination", self.elimination))
+            ("no_vote", self.no_vote), ("outsiders", self.outsiders), ("elimination", self.elimination),
+            ("broke_pledge", self.broke_pledge))
             for w, steps in shape(target)]
         if not found:
             return None
@@ -270,7 +279,7 @@ class Teller:
         best = {}
         for kind, shape in (("fulfilled", self.fulfilled), ("targeted", self.targeted), ("clash", self.clashing),
                             ("no_vote", self.no_vote), ("outsiders", self.outsiders),
-                            ("elimination", self.elimination)):
+                            ("elimination", self.elimination), ("broke_pledge", self.broke_pledge)):
             for w, steps in shape(target):
                 if kind not in best or w > best[kind][0]:
                     best[kind] = (w, steps)
@@ -290,7 +299,7 @@ class Teller:
                 return M("st_clash_short_me", t=S(target))
             if "x" in m.args:
                 return M("st_clash_short", t=S(target), x=m.args["x"])
-        if kind in ("fulfilled", "no_vote") or kind == "clash":
+        if kind in ("fulfilled", "no_vote", "broke_pledge") or kind == "clash":
             return steps[0][1]
         return None
 

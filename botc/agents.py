@@ -278,6 +278,14 @@ class GoodAgent(Agent):
     def accept(self, game, inviter, invited):
         return self.suspicion(game, inviter) < self.profile.confide_at + 10
 
+    def agrees(self, game, proposer, t):
+        """Promise to vote for t today? If I suspect t enough, or trust whoever asks and t isn't clean."""
+        if self.seat in game.dead or self.waits(game) or self.trusts_mayor(game) or self.role == "butler":
+            return False  # no promises I may not keep (the Butler votes only with their master)
+        sus = self.suspicion(game, t)
+        trusted = self.suspicion(game, proposer) < self.profile.confide_at
+        return sus >= self.threshold(self.profile.vote_at, game) - 10 or (trusted and sus >= 15)
+
     def statement(self, game):
         """Whom they say they suspect, and why; None to stay quiet."""
         cands = [s for s in game.alive if s != self.seat]
@@ -330,6 +338,8 @@ class GoodAgent(Agent):
         if s in self.impostors(game):
             grudge += 60  # they claim my character
         grudge += self.profile.silence_cost * len(game.silent_nights(s))
+        # A private promise to me, broken.
+        grudge += 25 * sum(1 for p in game.broken if p[1] == s and p[3] == self.seat)
         # Being swayed by what others say in public, as much as I trust whoever says it.
         herd = 0.0
         for day, speaker, t in game.accusations:
@@ -401,6 +411,9 @@ class GoodAgent(Agent):
         sus = self.suspicion(game, nominee)
         # Say it, then vote it: my own nomination, or whom I said today I suspect (unless someone I
         # suspect more is already on the block).
+        pledged = any(p[0] == game.day and p[1] == self.seat and p[2] == nominee for p in game.pledges)
+        if pledged and not ghost:
+            return True  # a promise is a promise
         if not ghost and (game.nominator_now == self.seat or (game.day, self.seat, nominee) in game.accusations):
             return block is None or sus > self.suspicion(game, block)
         # In the endgame a tie means nobody dies, which hands the game to evil: only switch for a clear reason.
@@ -444,6 +457,8 @@ class EvilAgent(Agent):
 
     def value(self, game, s):
         """The evil team pools what its members heard in private: a confided role is a known target."""
+        if s in game.team_knows:  # the Spy saw it in the grimoire
+            return VALUE.get(game.team_knows[s], 0)
         claims = [game.record_for(t).claims for t in sorted(self.team)]
         public = game.known.claims
         if not public:
@@ -479,6 +494,13 @@ class EvilAgent(Agent):
 
     def accept(self, game, inviter, invited):
         return True  # every private conversation is a chance to learn something
+
+    def agrees(self, game, proposer, t):
+        """Gladly against a good player. Against a teammate a novice says yes and won't vote; others
+        say no (a broken promise is remembered)."""
+        if self.seat in game.dead or game.roles[self.seat] == "butler":
+            return False
+        return t not in self.team or self.profile.name == "novice"
 
     def statement(self, game):
         """Evil players accuse like anyone else, pointing at the good player the town already doubts."""
