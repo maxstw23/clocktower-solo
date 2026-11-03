@@ -157,6 +157,10 @@ class Teller:
                 steps = [(None, M("st_virgin", d=fn.day, a=self.who(fn.nominator), t=self.who(fn.nominee))),
                          (None, M("st_clash_me") if self.me in c.seats else M("st_one_lies"))]
                 out.append((2.4 if self.me in c.seats else 1.4, steps))
+            elif c.why == "ping_misses" and role and self.me in c.seats:
+                clause = self.ping_me(c, target)
+                if clause is not None:
+                    out.append((2.0, [(None, clause)]))
             elif role and others:
                 x = min(others, key=lambda y: self.p.get(y, 1))
                 steps = [(None, M("st_claims", t=S(target), role=R(role))),
@@ -165,6 +169,18 @@ class Teller:
                     steps.append(("and", M("st_trust_x", x=S(x))))
                 out.append((1.8 if self.me in c.seats else 1.2, steps))
         return out
+
+    def ping_me(self, c, target):
+        """'X learned that T or I am the <role>; I'm not, so it should be T, yet T claims <theirs>.'"""
+        claims = self.pub.claims or ()
+        role = claims[target] if claims else None
+        r = next((r for r in self.game.pub.reports if r.seat in c.seats and ability(r.kind).category == "identity"
+                  and ability(r.kind).shape == "pair"
+                  and len(r.data) == 3 and r.data[0] is not None and not is_evil(r.data[2])
+                  and {r.data[0], r.data[1]} == {self.me, target}), None)
+        if r is None or not role:
+            return None
+        return M("st_ping_me", x=S(r.seat), role=R(r.data[2]), t=S(target), mine=R(role))
 
     def no_vote(self, target):
         out = []
@@ -185,6 +201,34 @@ class Teller:
             if who == target and asker == self.me:
                 out.append((2.3, [(None, M("st_broke", d=d, t=S(target), x=self.who(t)))]))
         return out[-1:]
+
+    def baron_count(self, target):
+        """Their information says there's a Baron, but there aren't the Outsiders a Baron brings."""
+        claims = self.pub.claims or ()
+        outs = sum(1 for r in claims if r is not None and KIND[r] == "outsider")
+        need = SETUP[self.pub.n][1] + 2
+        for r in self.game.pub.reports:
+            if r.seat == target and ability(r.kind).category == "identity" and r.data[-1] == "baron" \
+                    and outs < need - 1:
+                return [(2.2, [(None, M("st_baron", x=S(target), a=S(r.data[0]), b=S(r.data[1]))),
+                               ("but", M("st_baron_count", k=need, m=outs))])]
+        return []
+
+    def game_went_on(self, target):
+        """An executed player who looked evil vouched for the target, and the game went on: either
+        they weren't the Demon, or a Scarlet Woman took over."""
+        out = []
+        for d in self.pub.deaths:
+            x = d.seat
+            if d.cause not in ("execution", "slayer") or self.p.get(x, 0) < 0.5 or x == target:
+                continue
+            alive_then = self.pub.n - sum(e.tick < d.tick for e in self.pub.deaths)
+            vouched = any(n.source == x and n.target == target and n.weight < 0 for n in self.notes)
+            if alive_then >= 5 and vouched:
+                first = (M("st_shot_went_on", x=S(x), d=d.tick // 2) if d.cause == "slayer"
+                         else M("st_went_on", x=S(x), d=d.tick // 2))
+                out.append((2.0, [(None, first), ("and", M("st_vouched_by", x=S(x), t=S(target)))]))
+        return out
 
     def outsiders(self, target):
         claims = self.pub.claims or ()
@@ -256,7 +300,7 @@ class Teller:
         found = [(w, steps, kind) for kind, shape in (
             ("fulfilled", self.fulfilled), ("targeted", self.targeted), ("clash", self.clashing),
             ("no_vote", self.no_vote), ("outsiders", self.outsiders), ("elimination", self.elimination),
-            ("broke_pledge", self.broke_pledge))
+            ("broke_pledge", self.broke_pledge), ("baron", self.baron_count), ("went_on", self.game_went_on))
             for w, steps in shape(target)]
         if not found:
             return None
@@ -279,7 +323,8 @@ class Teller:
         best = {}
         for kind, shape in (("fulfilled", self.fulfilled), ("targeted", self.targeted), ("clash", self.clashing),
                             ("no_vote", self.no_vote), ("outsiders", self.outsiders),
-                            ("elimination", self.elimination), ("broke_pledge", self.broke_pledge)):
+                            ("elimination", self.elimination), ("broke_pledge", self.broke_pledge),
+                            ("baron", self.baron_count), ("went_on", self.game_went_on)):
             for w, steps in shape(target):
                 if kind not in best or w > best[kind][0]:
                     best[kind] = (w, steps)
@@ -299,7 +344,7 @@ class Teller:
                 return M("st_clash_short_me", t=S(target))
             if "x" in m.args:
                 return M("st_clash_short", t=S(target), x=m.args["x"])
-        if kind in ("fulfilled", "no_vote", "broke_pledge") or kind == "clash":
+        if kind in ("fulfilled", "no_vote", "broke_pledge", "baron", "went_on") or kind == "clash":
             return steps[0][1]
         return None
 
@@ -320,6 +365,9 @@ class Teller:
             return Chain(steps)
         if max_steps < 2:
             return None
+        changes = [c.role for c in self.pub.claim_log if c.seat == me]
+        if len(changes) > 1 and claim and changes[0] != claim:  # the first thing to explain
+            steps.append((None, M("d_hid", old=R(changes[0]), new=R(claim))))
         for note in self.notes:
             if note.target == me and note.why == "confirmed" and note.source not in (None, me):
                 r = next((r for r in self.pub.reports if r.seat == note.source and me in r.data[:-1]), None)
@@ -348,6 +396,12 @@ class Teller:
                 steps.append((None, M("d_promise_ut_any")))
         elif claim in ("empath", "fortune_teller") and ability(claim).when == "each":
             steps.append((None, M("d_promise")))
+        for r in g.pub.reports:  # the information against me may come from the Drunk
+            if r.seat != me and _points_at(r, me, g.pub):
+                ping = next((p for p in g.pub.reports if p.data[-1:] == ("drunk",) and r.seat in p.data[:2]), None)
+                if ping is not None:
+                    steps.append((None, M("d_drunk", x=S(r.seat), y=S(ping.seat))))
+                    break
         if accuser is not None and accuser != me and len(steps) < max_steps:
             why = self.agent.notebook_reason(g, accuser) if hasattr(self.agent, "notebook_reason") else None
             if why is not None:

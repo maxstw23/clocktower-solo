@@ -34,7 +34,7 @@ class Profile:
     bandwagon: int = 3     # vote threshold drops this much per yes vote already cast
     ghost_vote_at: int = 60
     urgency: int = 5       # thresholds drop this much per day
-    slayer_at: int = 50
+    slayer_at: int = 30     # Demon likelihood (as they read it) at which a Slayer shoots
     saint_caution: int = 40  # extra suspicion needed to vote for a claimed Saint
     lookahead: int = 3       # evil only: how many candidate lies they test against their read of the town
     story_check: int = 1     # evil only: before lying, check the lie fits 0 = nothing, 1 = their own
@@ -92,6 +92,10 @@ def believe(solver, pub, profile, seat=None, base=None):
             return tally(pub.n, worlds, relaxed=level > 0)
     return Belief.empty(pub.n)
 
+
+# Characters whose claim should come with information.
+INFO_CLAIMS = ("washerwoman", "librarian", "investigator", "chef", "empath", "fortune_teller", "undertaker",
+               "ravenkeeper")
 
 # Info roles whose ability is spent after night one: the natural Virgin testers.
 SPENT = ("washerwoman", "librarian", "investigator", "chef")
@@ -185,9 +189,12 @@ class Agent:
         if best and best[0] >= 0.6:
             whose = M("my") if best[1] == self.seat else M("whose", x=S(best[1]))
             return M("r_ifinfo", whose=whose, pct=int(100 * best[0]))
-        if b.demon_pct(target) >= 40:
-            return M("r_demon_pct", pct=b.demon_pct(target))
-        return M("r_nothing", v=self.seat * 3 + target)
+        # Nothing specific: say what can be checked about them rather than a feeling.
+        if claim and not any(r.seat == target for r in pub.reports) and claim in INFO_CLAIMS:
+            return M("r_unshared", role=R(claim))
+        if claim:
+            return M("r_unbacked", role=R(claim))
+        return M("r_silent")
 
 
     def hidden_source(self, game, src, why=None):
@@ -211,7 +218,8 @@ class Agent:
             if item.why == "virgin_silent":
                 return M("r_clash_virgin", x=M("me") if self.seat in item.seats else S(others[0]))
             if self.seat in item.seats:
-                return M("r_clash_me")
+                said = Teller(game, self).ping_me(item, target) if item.why == "ping_misses" else None
+                return said if said is not None else M("r_clash_me")
             return M("r_clash", x=L((S(x) for x in others), conj=True))
         if how in ("accused_good", "vouched_evil"):
             if item.target == self.seat:
@@ -410,7 +418,7 @@ class GoodAgent(Agent):
 
     def vote(self, game, nominee, yes, needed, block, ghost):
         """Yes if suspicious enough and clearly more suspicious than whoever is already on the block."""
-        if nominee == self.seat or self.trusts_mayor(game) or self.waits(game):
+        if nominee == self.seat or self.trusts_mayor(game) or self.waits(game) or (game.day, self.seat) in game.pleaded:
             return False
         endgame = len(game.alive) <= 4
         sus = self.suspicion(game, nominee)
@@ -560,6 +568,8 @@ class EvilAgent(Agent):
 
     def vote(self, game, nominee, yes, needed, block, ghost):
         """Vote like a townsperson on good players, never for the team or to replace a good player."""
+        if (game.day, self.seat) in game.pleaded:
+            return False  # asked for no execution today: keep the story straight
         if self.busses(game, nominee) and yes + 2 >= needed and block is None:
             return True  # the Minion is going anyway: be seen voting for it
         if nominee in self.team and not ghost and self.profile.name != "novice" \

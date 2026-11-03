@@ -32,6 +32,11 @@ BLUFF_ORDER = ("washerwoman", "librarian", "investigator", "chef", "undertaker",
                "fortune_teller", "soldier", "mayor", "ravenkeeper", "virgin", "slayer")
 
 
+# Story clauses that make sense without the ones before them (the rest begin "but", "so that"...).
+STANDALONE = {"st_ft", "st_ping", "st_named", "st_empath", "st_nominated", "st_accused", "st_claims", "st_virgin",
+              "st_no_vote", "st_outsiders", "st_no_outsiders", "st_only", "st_only_some", "st_broke", "st_baron",
+              "st_went_on", "st_ping_me", "st_shot_went_on"}
+
 # Characters a bluffer can be caught out on at once: a Townsfolk nominating a fake Virgin, a fake
 # Slayer asked to shoot.
 TESTABLE = ("virgin", "slayer")
@@ -103,6 +108,8 @@ class Game:
         self.offers = []           # players who offered today to be executed if there's no better choice
         self.accused_today = {}    # target -> [(speaker, reason in English)] said in public today
         self.nominated_today = set()
+        self.pleaded = set()       # (day, seat): asked the table not to execute anyone today
+        self.defended = set()      # (day, seat): has defended themself today
         self.nominator_now = None
         self.told_today = {}
         self.accusations = []      # (day, speaker, target): who said in public whom they suspect
@@ -306,15 +313,21 @@ class Game:
         claims[agent.seat] = agent.role
         return replace(view, claims=tuple(claims)).plus(*agent.inbox)
 
+    def _verdicts_only(self, pub):
+        """Keep only the votes that executed someone: they are evidence (the town's verdict); the
+        others don't change what a player believes, and dropping them keeps beliefs cached."""
+        executed = {(d.tick // 2, d.seat) for d in pub.deaths if d.cause == "execution"}
+        return replace(pub, votes=tuple(v for v in pub.votes if (v.day, v.nominee) in executed))
+
     def belief_of(self, agent):
-        view = replace(self.view_of(agent), votes=())  # votes don't change which worlds are possible
+        view = self._verdicts_only(self.view_of(agent))
         key = (view, agent.seat)
         if key not in self._beliefs:
             self._beliefs[key] = believe(self.solver, view, agent.profile, agent.seat)
         return self._beliefs[key]
 
     def public_belief(self, pub=None, base=None, profile=REFERENCE):
-        pub = replace(pub or self.known, votes=())
+        pub = self._verdicts_only(pub or self.known)
         key = (pub, profile.name)
         if key not in self._beliefs:
             self._beliefs[key] = believe(self.solver, pub, profile, base=base)
@@ -518,6 +531,10 @@ class Game:
         self.phase = "discussion"
         await self.say(M("phase_discussion"))
         await self.beat(M("phase_discussion_title"), M("phase_discussion_body"))
+        x = self.executed_on(self.day - 1)
+        then = self.n - sum(d.tick < day_tick(self.day - 1) for d in self.pub.deaths)  # alive at that execution
+        if x is not None and then >= 5 and notebook.suspicions(self.known).get(x, 0) >= 0.5:
+            await self._went_on(x, "execution")  # we executed who we thought was evil, yet here we are
         for s in order:
             await self._speak(s, accuse=self.day > 1)
             if self.winner:
@@ -698,7 +715,7 @@ class Game:
                     await self._whisper(s, group, report=r)
             said = agent.statement(self)
             if said:
-                await self._whisper(s, group, text=self.suspect_line(s, said[0], said[1]))
+                await self._whisper(s, group, text=self.suspect_line(s, said[0], said[1], public=False))
                 if said[0] not in group and said[0] in self.alive:
                     await self._propose(s, group, said[0])
             else:
@@ -877,25 +894,26 @@ class Game:
         if said:
             await self._accuse(s, *said)
 
-    def suspect_line(self, s, t, why, key="suspect"):
+    def suspect_line(self, s, t, why, key="suspect", public=True):
         """'I suspect X: reason.' or, for a story, the story ending 'so I suspect X'."""
         if isinstance(why, Chain):
-            return M("said_suspect", text=self._untold(s, why).plus("so", M("c_suspect", t=S(t), v=s + t)))
+            told = self._untold(s, why) if public else why
+            return M("said_suspect", text=told.plus("so", M("c_suspect", t=S(t), v=s + t)))
         return self.m(key, t=S(t), why=why)
 
     def _untold(self, s, story):
-        """Leave out the steps someone already went through today ("I won't repeat what X said")."""
-        steps, skipped = [], None
-        for link, step in story.steps:
-            g = _gist(step, s)
-            first = self.told_today.setdefault(g, s)
-            if first != s and not steps:
-                skipped = skipped if skipped is not None else first
-                continue
-            steps.append((link if steps or skipped is None else None, step))
-        if skipped is not None and steps:
-            steps.insert(0, (None, M("st_as_said", x=S(skipped))))
-        return Chain(steps) if steps else story
+        """Leave out the opening steps someone already went through in public today ("I won't
+        repeat what X said"), as long as what's left stands on its own."""
+        gists = [_gist(step, s) for _, step in story.steps]
+        k = 0
+        while k < len(gists) and self.told_today.get(gists[k], s) != s:
+            k += 1
+        first = self.told_today.get(gists[0], s) if gists else s
+        for g in gists:
+            self.told_today.setdefault(g, s)
+        if k == 0 or k == len(gists) or story.steps[k][1].key not in STANDALONE:
+            return story
+        return Chain([(None, M("st_as_said", x=S(first)))] + [(None, story.steps[k][1])] + list(story.steps[k + 1:]))
 
     async def _accuse(self, s, t, why):
         """Say whom you suspect and why, without parroting: agree with whoever already gave the same
@@ -926,6 +944,7 @@ class Game:
             return
         self.replied.add((self.day, t))
         story = Teller(self, self.agents[t]).defend(by, max_steps=min(3, self.agents[t].profile.story))
+        self.defended.add((self.day, t))
         if story is not None:
             await self.speech(t, M("said_defend", text=story))
             return
@@ -949,6 +968,19 @@ class Game:
         self.pub = replace(self.pub, shots=self.pub.shots + (Shot(self.day, s, t, hit),))
         if hit:
             await self._kill(t, "slayer")
+            if self.winner is None:
+                await self._went_on(t, "slayer")
+
+    async def _went_on(self, x, cause):
+        """Someone points out what a Demon-looking death without the game ending means."""
+        speaker = next((y for y in self.alive if y != self.human and y not in self.team
+                        and self.agents[y].profile.name != "novice"), None)
+        if speaker is None:
+            return
+        key = "st_shot_went_on" if cause == "slayer" else "st_went_on"
+        when = self.day if cause == "slayer" else self.day - 1
+        await self.speech(speaker, M("said_suspect", text=Chain([(None, M(key, x=S(x), d=when)),
+                                                                   (None, M("st_sw_among_us"))])))
 
     def _evil_report(self, s, night):
         """An evil player invents info for their bluff, choosing what they think the town reads best."""
@@ -1257,7 +1289,7 @@ class Game:
         on_block = None if st["tie"] else st["block"]
         await self.say(M("vote_on_block", t=S(t), needed=needed, b=S(on_block)) if on_block is not None
                        else M("vote_on", t=S(t), needed=needed))
-        voters = await self._vote(t, needed, on_block)
+        voters = await self._vote(t, needed, st["block"])  # after a tie, still weigh against the tied player
         self.pub = replace(self.pub, votes=self.pub.votes + (Vote(self.day, s, t, tuple(voters)),))
         for p in self.pledges:  # a private promise to vote for t, not kept
             if p[0] == self.day and p[2] == t and p[1] not in voters and p[1] in self.alive and p not in self.broken:
@@ -1304,6 +1336,7 @@ class Game:
             return
         for x in self.alive:
             if claims[x] == "mayor" and x != self.human:
+                self.pleaded.add((self.day, x))  # having asked for no execution, they won't vote for one
                 await self.speech(x, self.m("mayor_plea" if len(self.alive) == 3 else "mayor_plea4"))
 
     def _sus(self, agent, x):
@@ -1375,6 +1408,11 @@ class Game:
                 await self._publish(*sorted(agent.inbox, key=lambda r: r.night))
                 agent.inbox.clear()
         story = Teller(self, agent).defend(by, max_steps=agent.profile.story)
+        if (self.day, t) in self.defended:  # said it already today: don't recite it again
+            claim = self.pub.claims[t] if self.pub.claims else None
+            await self.speech(t, M("d_again", role=R(claim), v=self.day + t))
+            return
+        self.defended.add((self.day, t))
         if story is not None:
             await self.speech(t, M("said_defend", text=story))
             return

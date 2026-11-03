@@ -35,6 +35,8 @@ EVIL_CLAIM = 3.0      # claims an evil character
 CHANGED = 0.5         # per claim change
 CLASH = 2.0           # blame shared among a clash, by how little each member is trusted
 SHOT_MISSED = -0.3    # a Slayer shot that did nothing: not the Demon
+EXECUTED = 1.0        # executed by the town's vote (scaled by how many voted)
+SHOT_DEMON = 4.0      # killed by a Slayer's shot
 BUDGET = 400          # role assignments a player checks per suspect they consider (attention)
 
 
@@ -90,6 +92,10 @@ def notebook(pub):
                 w = NAMED_EVIL if len(seats) == 1 else ONE_OF_TWO
                 notes += [Note(src, x, w, "named_evil", 0.5 / len(seats)) for x in seats]
                 continue
+            if role == "drunk":
+                # Nobody claims the Drunk (they don't know): "one of these two is the Drunk" says one of
+                # them is good but has wrong information, not that anyone is lying.
+                continue
             fits = [x for x in seats if claims[x] == role]
             notes += [Note(src, x, CONFIRMED, "confirmed") for x in fits]
             if not fits:
@@ -105,7 +111,17 @@ def notebook(pub):
     for death in pub.deaths:
         if death.cause == "night":
             notes.append(Note(None, death.seat, NIGHT_DEATH, "night_death"))
+        elif death.cause == "execution":
+            # The town's verdict: an executed player was judged evil by those who voted, so what they
+            # said counts for less (unless the record later clears them).
+            day = death.tick // 2
+            v = next((v for v in reversed(pub.votes) if v.day == day and v.nominee == death.seat), None)
+            if v is not None:
+                alive = n - sum(d.tick < death.tick for d in pub.deaths)
+                notes.append(Note(None, death.seat, EXECUTED * min(1.0, 2 * len(v.voters) / alive), "executed"))
     for sh in pub.shots:
+        if sh.killed:  # the Slayer's shot killed them: the Demon (or the Recluse, rarely)
+            notes.append(Note(None, sh.target, SHOT_DEMON, "shot_dead"))
         if not sh.killed:
             notes.append(Note(None, sh.target, SHOT_MISSED, "shot_missed"))
     for fn in pub.first_noms:
